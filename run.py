@@ -1,5 +1,6 @@
 from ConnectionsBot import ConnectionsBot
 from Game import Game
+from Guesses import Guess
 import sys
 import json
 import time
@@ -13,11 +14,14 @@ def setup_game(id):
     return game
 
 
-def run(game):
-    agent = ConnectionsBot(game)
+def run(game: Game):
+    words = [x for row in game.grid for x in row]
+    agent = ConnectionsBot(words)
 
     while True:
-        status: str = agent.guess()
+        guess: Guess = agent.guess()
+        guess_feedback: str = game.process_guess(guess)
+        status: str = agent.process_guess_feedback(guess, guess_feedback)
 
         if status == "win":
             print("Game won!")

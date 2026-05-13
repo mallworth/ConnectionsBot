@@ -4,17 +4,12 @@ from Guesses import Guess
 import random
 
 class ConnectionsBot:
-    def __init__(self, game: Game):
-        self.game = game
-
+    def __init__(self, words):
         # Initialize state of the game, this will be updated as guesses are made
-        words = [x for row in game.grid for x in row]
         self.game_state = GameState(words)
 
-
-    # Add a guess (4 strings) to the list of guesses & update game state.
-    # Returns guess states ("win", "active", or "lose")
-    def guess(self) -> str:
+    # Generate a 4 word guess based on game state
+    def guess(self) -> Guess:
         '''
         NOTE: This is where pretty much all of our work will go!
         We will have several approaches to synthesizing information 
@@ -29,7 +24,12 @@ class ConnectionsBot:
             guess = Guess(random.sample(self.game_state.words, 4)) 
 
         print(f"Guessing: {guess.words}")
-        res = self.game.process_guess(guess)
+        return guess
+        
+    
+    # Update game state based on feedback from game in response to a guess
+    # returns status of game after guess
+    def process_guess_feedback(self, guess, res) -> str:
         print(f"Game response: {res}")
 
         guess_type = res["type"]
