@@ -13,16 +13,14 @@ class GameState:
         self.one_away_guess_groups: Guesses = Guesses() # Connections notifies you when 3 of 4 words you guessed are in a group. This variables tracks those guesses
         self.guesses: Guesses = Guesses() # ALL guesses made in this game
    
-    def add_correct_guess(self, words: str, theme: str):
-        guess = Guess(words)
+    def add_correct_guess(self, guess: Guess, theme: str):
         if theme in self.correct_guess_groups:
             raise ValueError(f"Theme: {theme} already guessed")
         else:
             self.correct_guess_groups[theme] = guess
+            self.guesses.add_guess(guess)
 
-    def add_incorrect_guess(self, words: str, one_away: bool):
-        guess = Guess(words)
-
+    def add_incorrect_guess(self, guess: Guess, one_away: bool):
         if one_away:    # If this guess was 1 away from correct, track that
             self.one_away_guess_groups.add_guess(guess)
         self.guesses.add_guess(guess)
