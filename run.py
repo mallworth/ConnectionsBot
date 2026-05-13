@@ -15,6 +15,7 @@ def setup_game(id):
 
 
 def run(game: Game):
+    start = time.time()
     words = [x for row in game.grid for x in row]
     agent = ConnectionsBot(words)
 
@@ -24,16 +25,16 @@ def run(game: Game):
         status: str = agent.process_guess_feedback(guess, guess_feedback)
 
         if status == "win":
-            print("Game won!")
+            end = time.time()
+            print(f"Game won! ({end-start}s)")
             print(agent.game_state.guesses)
             return
 
         if status == "lose":
-            print("Game lost.")
+            end = time.time()
+            print(f"Game lost. ({end-start}s)")
             print(agent.game_state.guesses)
             return
-        
-        time.sleep(1)
 
 
 if __name__ == "__main__":

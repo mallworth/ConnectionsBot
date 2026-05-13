@@ -1,12 +1,20 @@
 from GameState import GameState
-from Game import Game
 from Guesses import Guess
-import random
+from think import *
+from itertools import combinations
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 class ConnectionsBot:
     def __init__(self, words):
         # Initialize state of the game, this will be updated as guesses are made
         self.game_state = GameState(words)
+        self.model = model
+
+    # Given a guess, return a score (higher = better guess)
+    def _guess_utility(self, guess: Guess) -> float:
+        return embedding_similarity(guess, self.model)
 
     # Generate a 4 word guess based on game state
     def guess(self) -> Guess:
@@ -19,12 +27,20 @@ class ConnectionsBot:
         NOTE: Please do most of your work in other files and import them to this
         file when adding them to this function to keep everything clean.
         '''
-        guess = Guess(random.sample(self.game_state.words, 4)) # random guess for testing everything works
-        while guess in self.game_state.correct_guess_groups.values():
-            guess = Guess(random.sample(self.game_state.words, 4)) 
+        combos = [Guess(list(c)) for c in combinations(self.game_state.words_remaining, 4)]
+        for guess in combos:
+            if guess in self.game_state.incorrect_guess_groups.guesses:
+                combos.remove(guess)
 
-        print(f"Guessing: {guess.words}")
-        return guess
+        bestguess = (None, float('-inf'))
+
+        for c in combos:
+            score = self._guess_utility(c)
+            if score > bestguess[1]:
+                bestguess = (c, score)
+
+        print(f"Guessing: {bestguess[0].words}")
+        return bestguess[0]
         
     
     # Update game state based on feedback from game in response to a guess
