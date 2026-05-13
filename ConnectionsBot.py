@@ -24,9 +24,10 @@ class ConnectionsBot:
         NOTE: Please do most of your work in other files and import them to this
         file when adding them to this function to keep everything clean.
         '''
+        guess = Guess(random.sample(self.game_state.words, 4)) # random guess for testing everything works
         while guess in self.game_state.correct_guess_groups.values():
-            guess = Guess(random.sample(self.game_state.words, 4)) # random guess for testing everything works
-            
+            guess = Guess(random.sample(self.game_state.words, 4)) 
+
         print(f"Guessing: {guess.words}")
         res = self.game.process_guess(guess)
         print(f"Game response: {res}")

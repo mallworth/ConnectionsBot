@@ -5,13 +5,13 @@ from Guesses import Guess
 # while Game represents the reality of the world
 class Game:
     def __init__(self, categories, grid):
-        self.categories = categories
+        self.__categories = categories
         self.grid = grid
         self.mistakes = 0
         self.correct = 0
 
     def process_guess(self, guess: Guess):
-        for c in self.categories:
+        for c in self.__categories:
             if set([w.lower() for w in guess.words]) == set([w.lower() for w in c["words"]]):
                 # Correctly guessed!
                 self.correct += 1
