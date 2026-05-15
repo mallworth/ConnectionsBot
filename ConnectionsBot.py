@@ -27,20 +27,9 @@ class ConnectionsBot:
         NOTE: Please do most of your work in other files and import them to this
         file when adding them to this function to keep everything clean.
         '''
-        combos = [Guess(list(c)) for c in combinations(self.game_state.words_remaining, 4)]
-        for guess in combos:
-            if guess in self.game_state.incorrect_guess_groups.guesses:
-                combos.remove(guess)
+        best_avg_emb = embedding_similarity(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.model)
 
-        bestguess = (None, float('-inf'))
-
-        for c in combos:
-            score = self._guess_utility(c)
-            if score > bestguess[1]:
-                bestguess = (c, score)
-
-        print(f"Guessing: {bestguess[0].words}")
-        return bestguess[0]
+        return best_avg_emb[0]
         
     
     # Update game state based on feedback from game in response to a guess
