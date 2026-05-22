@@ -10,7 +10,7 @@ class GameState:
         self.mistakes: int = 0 # Number of mistakes made this game. Once 4 mistakes are made, the game is lost
         self.correct_guess_groups: dict[str, Guess] = {} # Dictionary of correct guesses made and their associated "theme"
         
-        self.one_away_guess_groups: Guesses = Guesses() # Connections notifies you when 3 of 4 words you guessed are in a group. This variables tracks those guesses
+        self.one_away_guess_groups: Guesses = Guesses() # Connections notifies you when 3 of 4 words you guessed are in a group. This variable tracks those guesses
         self.incorrect_guess_groups: Guesses = Guesses()
         self.guesses: Guesses = Guesses() # ALL guesses made in this game
 

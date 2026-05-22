@@ -19,7 +19,7 @@ def test():
     played = 0
     game_id = 1
 
-    while played < 100:
+    while played < 250:
         game_dict = setup_game(game_id)
         if not game_dict:
             game_id += 1

@@ -10,7 +10,7 @@ def setup_game(id):
     with open("data/Connections_Data_train.json") as f:
         games = json.load(f)
         
-    game = next(g for g in games if g["game_id"] == game_id)
+    game = next(g for g in games if g["game_id"] == id)
     return game
 
 
@@ -26,13 +26,13 @@ def run(game: Game):
 
         if status == "win":
             end = time.time()
-            print(f"Game won! ({end-start}s)")
+            print(f"Game {game.id} won! ({end-start}s)")
             print(agent.game_state.guesses)
             return
 
         if status == "lose":
             end = time.time()
-            print(f"Game lost. ({end-start}s)")
+            print(f"Game {game.id} lost. ({end-start}s)")
             print(agent.game_state.guesses)
             return
 
@@ -41,7 +41,7 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2:
         game_id = int(sys.argv[1])
         game_dict = setup_game(game_id)
-        game = Game(game_dict["categories"], game_dict["grid"])
+        game = Game(game_dict["categories"], game_dict["grid"], game_id)
 
         run(game)
     else:

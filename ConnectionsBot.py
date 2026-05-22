@@ -9,7 +9,7 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 class ConnectionsBot:
     def __init__(self, words):
         # Initialize state of the game, this will be updated as guesses are made
-        self.game_state = GameState(words)
+        self.game_state = GameState([w.lower() for w in words])
         self.model = model
 
     # Given a guess, return a score (higher = better guess)
@@ -27,15 +27,31 @@ class ConnectionsBot:
         NOTE: Please do most of your work in other files and import them to this
         file when adding them to this function to keep everything clean.
         '''
-        best_avg_emb = embedding_similarity(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.model)
+        # If any 1 away guesses have been made, try those first
+        one_away = self.game_state.one_away_guess_groups
+        if one_away.guesses:
+            one_away_embedding_similarity(self.game_state.words_remaining,
+                                          self.game_state.incorrect_guess_groups,
+                                          self.game_state.one_away_guess_groups,
+                                          self.model)
 
+
+
+        best_avg_emb = embedding_similarity(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.model)
         return best_avg_emb[0]
+    
+        # setting some similarity threshold to use embedding similarity
+        # NOTE: this does NOT work well!! maybe need to think of a better way to combine methods
+        if best_avg_emb[1] > 0.43:
+            return best_avg_emb[0]
+        else:
+            return wordnet_guess(self.game_state.words_remaining, self.game_state.incorrect_guess_groups)
         
     
     # Update game state based on feedback from game in response to a guess
     # returns status of game after guess
     def process_guess_feedback(self, guess, res) -> str:
-        print(f"Game response: {res}")
+        #print(f"Game response: {res}")
 
         guess_type = res["type"]
         guess_category = res["category"]

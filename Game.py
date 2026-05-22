@@ -4,9 +4,10 @@ from Guesses import Guess
 # GameState is basically the agents knowledge of the world,
 # while Game represents the reality of the world
 class Game:
-    def __init__(self, categories, grid):
+    def __init__(self, categories, grid, id):
         self.__categories = categories
         self.grid = grid
+        self.id = id
         self.mistakes = 0
         self.correct = 0
 
