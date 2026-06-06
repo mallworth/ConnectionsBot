@@ -1,4 +1,11 @@
 from Guesses import Guess, Guesses
+from enum import IntEnum
+
+class Color(IntEnum):
+    RED = 0
+    BLUE = 1
+    YELLOW = 2
+    GREEN = 3
 
 class GameState:
     def __init__(self, words: list[str]):

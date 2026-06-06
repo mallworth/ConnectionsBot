@@ -27,26 +27,18 @@ class ConnectionsBot:
         NOTE: Please do most of your work in other files and import them to this
         file when adding them to this function to keep everything clean.
         '''
-        # If any 1 away guesses have been made, try those first
-        one_away = self.game_state.one_away_guess_groups
-        if one_away.guesses:
-            one_away_embedding_similarity(self.game_state.words_remaining,
-                                          self.game_state.incorrect_guess_groups,
-                                          self.game_state.one_away_guess_groups,
-                                          self.model)
 
+        best_avg_emb: WeightedGuess = embedding_similarity(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.model)
+        insert_guess: WeightedGuess = char_insertion(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.model)
+        homophone_guess: WeightedGuess = similar_homophones(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.model)
+        best_avg_emb.weight *= 1.2
 
+        print(f"Embedding weight: {best_avg_emb.weight}, Guess: {best_avg_emb.guess.words}")
+        print(f"Insert weight: {insert_guess.weight}, guess: {insert_guess.guess.words}")
+        print(f"Homophone weight: {homophone_guess.weight}, guess: {homophone_guess.guess.words}")
+        print()
 
-        best_avg_emb = embedding_similarity(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.model)
-        return best_avg_emb[0]
-    
-        # setting some similarity threshold to use embedding similarity
-        # NOTE: this does NOT work well!! maybe need to think of a better way to combine methods
-        if best_avg_emb[1] > 0.43:
-            return best_avg_emb[0]
-        else:
-            return wordnet_guess(self.game_state.words_remaining, self.game_state.incorrect_guess_groups)
-        
+        return max([best_avg_emb, insert_guess, homophone_guess], key=lambda x: x.weight).guess
     
     # Update game state based on feedback from game in response to a guess
     # returns status of game after guess
