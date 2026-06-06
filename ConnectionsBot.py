@@ -43,14 +43,14 @@ class ConnectionsBot:
     # Update game state based on feedback from game in response to a guess
     # returns status of game after guess
     def process_guess_feedback(self, guess, res) -> str:
-        #print(f"Game response: {res}")
-
         guess_type = res["type"]
         guess_category = res["category"]
         guess_status = res["status"]
+        guess_color = res["color"]
 
         if guess_type == "correct":
-            self.game_state.add_correct_guess(guess, guess_category)
+            self.game_state.add_correct_guess(guess, guess_category, guess_color)
+            #print(f"correctly guessed: {guess.words} for category '{guess_category}' of color {guess_color.name}")
         else:
             self.game_state.add_incorrect_guess(guess, guess_type == "oneaway")
 

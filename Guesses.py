@@ -10,6 +10,10 @@ class Guess:
         
     def __eq__(self, other):
         return isinstance(other, Guess) and set(self.words) == set(other.words)
+    
+    # Used to track correct guesses in gamestate
+    def __hash__(self):
+        return hash(frozenset(self.words))
 
 class Guesses:
     def __init__(self):

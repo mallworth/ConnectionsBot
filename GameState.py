@@ -2,10 +2,10 @@ from Guesses import Guess, Guesses
 from enum import IntEnum
 
 class Color(IntEnum):
-    RED = 0
-    BLUE = 1
-    YELLOW = 2
-    GREEN = 3
+    YELLOW = 0
+    GREEN = 1
+    BLUE = 2
+    PURPLE = 3
 
 class GameState:
     def __init__(self, words: list[str]):
@@ -15,7 +15,8 @@ class GameState:
             raise ValueError(f"Expected exactly 16 words, got {len(words)}")
         
         self.mistakes: int = 0 # Number of mistakes made this game. Once 4 mistakes are made, the game is lost
-        self.correct_guess_groups: dict[str, Guess] = {} # Dictionary of correct guesses made and their associated "theme"
+        
+        self.correct_guess_groups: dict[Guess, (str, Color)] = {} # Dictionary of correct guesses made and their associated "theme" and the "color" of the guess (indicates how challenging, scale of 0-3)
         
         self.one_away_guess_groups: Guesses = Guesses() # Connections notifies you when 3 of 4 words you guessed are in a group. This variable tracks those guesses
         self.incorrect_guess_groups: Guesses = Guesses()
@@ -24,11 +25,11 @@ class GameState:
         self.words_remaining: list[str] = words # As correct guesses are made, those words will be removed from this list
    
 
-    def add_correct_guess(self, guess: Guess, theme: str):
+    def add_correct_guess(self, guess: Guess, theme: str, color: Color):
         if theme in self.correct_guess_groups:
             raise ValueError(f"Theme: {theme} already guessed")
         else:
-            self.correct_guess_groups[theme] = guess
+            self.correct_guess_groups[guess] = (theme, color)
             self.guesses.add_guess(guess)
             self.words_remaining = list(set(self.words_remaining) - set(guess.words)) # update words remaining
 

@@ -21,7 +21,7 @@ def run(game: Game):
 
     while True:
         guess: Guess = agent.guess()
-        guess_feedback: str = game.process_guess(guess)
+        guess_feedback = game.process_guess(guess)
         status: str = agent.process_guess_feedback(guess, guess_feedback)
 
         if status == "win":

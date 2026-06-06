@@ -1,4 +1,5 @@
 from Guesses import Guess
+from GameState import Color
 
 # game simulation for an agent to interact with, using games from the Kaggle Connections dataset
 # GameState is basically the agents knowledge of the world,
@@ -19,6 +20,7 @@ class Game:
                 return {
                     "type": "correct",                                  # Guess feedback type, either correct, one away, or incorrect 
                     "category": c["name"].lower(),                      # If guess was correct, provide category name. Otherwise, this field is False
+                    "color": Color(int(c["level"])),
                     "status": "win" if self.correct >= 4 else "active"  # Status of game, either "win", "active", or "lose"
                 }
             if sum(g != gt for g, gt in zip(guess.words, c["words"])) == 1:
@@ -27,6 +29,7 @@ class Game:
                 return {
                     "type": "oneaway",
                     "category": False,
+                    "color": False,
                     "status": "lose" if self.mistakes >= 4 else "active"
                 }
             else:
@@ -37,6 +40,7 @@ class Game:
         return {
             "type": "incorrect",
             "category": False,
+            "color": False,
             "status": "lose" if self.mistakes >= 4 else "active"
         }
     
