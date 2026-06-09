@@ -56,18 +56,15 @@ def get_homophones(word) -> list[str]:
 # === Guessing functions ===
 # NOTE: functions used to inform ConnectionsBot.guess() should go here
 
-
-def embedding_similarity(words: list[str], incorrect: Guesses, model) -> WeightedGuess:
-    word_embs = {}
-    for w in words:
-        word_embs[w] = model.encode(w)
-
+def embedding_similarity(words: list[str], incorrect: Guesses, word_embs) -> WeightedGuess:
     combos = [Guess(list(c)) for c in combinations(words, 4)]
     for guess in combos:
         if guess in incorrect.guesses:
             combos.remove(guess)
 
     bestguess = WeightedGuess(None, float("-inf"))
+    # print(word_embs.keys())
+    # print(words)
 
     for c in combos:
         embeddings = [word_embs[w] for w in c.words]
@@ -76,6 +73,9 @@ def embedding_similarity(words: list[str], incorrect: Guesses, model) -> Weighte
 
         if score > bestguess.weight:
             bestguess = WeightedGuess(c, score)
+
+    if bestguess.guess is None:
+        return WeightedGuess(Guess(random.sample(words, 4)), 0.0)
 
     return bestguess
 
@@ -144,6 +144,9 @@ def char_insertion(word_list: list[str], incorrect: Guesses, model) -> WeightedG
             if weight > res.weight and guess not in incorrect.guesses:
                 res = WeightedGuess(guess, weight)
 
+    if res.guess is None:
+        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+
     return res
 
 
@@ -175,6 +178,9 @@ def similar_homophones(word_list: list[str], incorrect: Guesses, model) -> Weigh
             guess = Guess([homophone_to_original[h] for h in most_similar])
             if weight > res.weight and guess not in incorrect.guesses:
                 res = WeightedGuess(guess, weight)
+
+    if res.guess is None:
+        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
 
     return res
 
