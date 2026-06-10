@@ -52,9 +52,11 @@ def test(weight_matrix=None):
 
 
 def random_weight_matrix():
+    # The bot now has four strategies, so each profile needs four tunable
+    # multipliers instead of the old three.
     keys = ["empty", Color.YELLOW, Color.GREEN, Color.BLUE, Color.PURPLE]
     values = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
-    return {key: [random.choice(values) for _ in range(3)] for key in keys}
+    return {key: [random.choice(values) for _ in range(4)] for key in keys}
 
 
 if __name__ == "__main__":
