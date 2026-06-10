@@ -38,6 +38,7 @@ class GameState:
 
     def add_incorrect_guess(self, guess: Guess, one_away: bool, strategy: str = None, weight: float = 0.0):
         if one_away:    # If this guess was 1 away from correct, track that
+            # One-away guesses are remembered as clues, not just as mistakes.
             self.one_away_guess_groups.add_guess(guess)
             # Store optional metadata only for one-away guesses because those
             # are the guesses worth repairing on later turns.
@@ -54,5 +55,4 @@ class GameState:
 
     def game_lost(self) -> bool:
         return self.mistakes >= 4
-
 

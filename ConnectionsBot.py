@@ -9,12 +9,13 @@ STRATEGY_ORDER = ["embedding", "phrase", "insertion", "homophone"]
 
 DEFAULT_WEIGHT_MATRIX = {
     # Each profile gets one multiplier per strategy in STRATEGY_ORDER.
-    # The values stay simple so tuning can happen without changing code flow.
-    "empty":       [1.0, 1.0, 1.0, 1.0],
-    Color.YELLOW:  [1.0, 1.0, 1.0, 1.0],
-    Color.GREEN:   [1.0, 1.0, 1.0, 1.0],
-    Color.BLUE:    [1.0, 1.0, 1.0, 1.0],
-    Color.PURPLE:  [1.0, 1.0, 1.0, 1.0],
+    # Phrase is weighted lower by default so normal turns stay close to the
+    # main-branch embedding/insertion/homophone behavior unless tuned later.
+    "empty":       [1.0, 0.6, 1.0, 1.0],
+    Color.YELLOW:  [1.0, 0.6, 1.0, 1.0],
+    Color.GREEN:   [1.0, 0.6, 1.0, 1.0],
+    Color.BLUE:    [1.0, 0.6, 1.0, 1.0],
+    Color.PURPLE:  [1.0, 0.6, 1.0, 1.0],
 }
 
 STRATEGY_PRIORITIES = {
@@ -40,6 +41,9 @@ class ConnectionsBot:
         # Remember which strategy produced each returned guess so one-away
         # feedback can guide a later one-word repair.
         self.guess_strategy_info = {}
+        # Alternation is only for recovery after wrong guesses; a correct guess
+        # resets this so the next turn uses the normal color-based weights.
+        self.wrong_guess_streak = 0
 
         embs = {}
         for w in words:
@@ -74,10 +78,10 @@ class ConnectionsBot:
         return dict(zip(STRATEGY_ORDER, weights[:len(STRATEGY_ORDER)]))
 
     def _rotated_strategy_priority(self, profile_key) -> list[str]:
-        # Every wrong guess advances the queue, so the bot explores a different
-        # strategy order even before it has found a first correct group.
+        # Only consecutive wrong guesses rotate the queue. Correct guesses reset
+        # the streak and return to the main-branch color-weight behavior.
         priorities = STRATEGY_PRIORITIES[profile_key]
-        rotation = self.game_state.mistakes % len(priorities)
+        rotation = self.wrong_guess_streak % len(priorities)
         return priorities[rotation:] + priorities[:rotation]
 
     # Generate a 4 word guess based on game state
@@ -91,17 +95,19 @@ class ConnectionsBot:
         NOTE: Please do most of your work in other files and import them to this
         file when adding them to this function to keep everything clean.
         '''
-        # The base profile still follows the original color-based idea: once a
-        # color is solved, use a strategy queue tuned for that stage of the game.
-        # Mistakes rotate that queue, so repeated wrong guesses force exploration
-        # even if no correct group has been found yet.
+        # Start with the original color-based behavior: solved colors select
+        # the base weights. Alternation is only added after a wrong guess.
         profile_key = self._strategy_profile_key()
         base_weights = self._strategy_weights(profile_key)
-        strategy_priority = self._rotated_strategy_priority(profile_key)
-        priority_weights = {
-            strategy: PRIORITY_MULTIPLIERS[i]
-            for i, strategy in enumerate(strategy_priority)
-        }
+        strategy_priority = None
+        priority_weights = {strategy: 1.0 for strategy in STRATEGY_ORDER}
+
+        if self.wrong_guess_streak > 0:
+            strategy_priority = self._rotated_strategy_priority(profile_key)
+            priority_weights = {
+                strategy: PRIORITY_MULTIPLIERS[i]
+                for i, strategy in enumerate(strategy_priority)
+            }
 
         cosine_sim: WeightedGuess = embedding_similarity(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.word_embs)
         phrase_guess: WeightedGuess = phrase_context_guess(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.word_embs)
@@ -120,7 +126,8 @@ class ConnectionsBot:
             weighted_guess.weight *= base_weights[strategy] * priority_weights[strategy]
 
         print()
-        print(f"Strategy priority: {strategy_priority}")
+        if strategy_priority is not None:
+            print(f"Strategy priority after wrong guess: {strategy_priority}")
         print(f"Embedding weight: {cosine_sim.weight}, guess: {cosine_sim.guess.words}")
         print(f"Phrase weight: {phrase_guess.weight}, guess: {phrase_guess.guess.words}")
         print(f"Insert weight: {insert_guess.weight}, guess: {insert_guess.guess.words}")
@@ -136,11 +143,14 @@ class ConnectionsBot:
             self.game_state.one_away_guess_weights,
             self.word_embs,
             self.model,
+            best_default.guess,
         )
 
         # One-away feedback is strong evidence, so accept a repair even when it
         # is only close to the normal best strategy score.
         if repair_guess.guess is not None and repair_guess.weight >= best_default.weight * REPAIR_ACCEPT_RATIO:
+            # A near-miss is strong enough to beat the normal pick when the
+            # repaired candidate is still close to the best current guess.
             print(f"One-away repair weight: {repair_guess.weight}, guess: {repair_guess.guess.words}")
             repair_strategy = getattr(repair_guess, "strategy", "embedding")
             self.guess_strategy_info[repair_guess.guess] = (repair_strategy, repair_guess.weight)
@@ -158,9 +168,13 @@ class ConnectionsBot:
         guess_color = res["color"]
 
         if guess_type == "correct":
+            # Correct guesses clear the recovery state, so the next turn goes
+            # back to the standard color-based weighting path.
+            self.wrong_guess_streak = 0
             self.game_state.add_correct_guess(guess, guess_category, guess_color)
             print(f"correctly guessed: {guess.words} for category '{guess_category}' of color {guess_color.name}")
         else:
+            self.wrong_guess_streak += 1
             strategy, weight = self.guess_strategy_info.get(guess, (None, 0.0))
             if guess_type == "oneaway":
                 print(f"one away: {guess.words} from strategy '{strategy}'")

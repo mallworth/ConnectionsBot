@@ -20,6 +20,7 @@ MIN_PHRASE_ZIPF = 3.6
 PHRASE_SCORE_NORMALIZER = 6.0
 PHRASE_BREADTH_PENALTY = 0.02
 REPAIR_BONUS = 1.08
+REPAIR_DEFAULT_OVERLAP_BONUS = 0.1
 
 PHRASE_STOPWORDS = {
     # These are too generic to be useful as phrase anchors, so we skip them
@@ -161,6 +162,8 @@ def embedding_group_score(guess_words: list[str], word_embs) -> float:
 def phrase_guess_score(guess: Guess, word_embs=None) -> float:
     # Score one fixed 4-word guess using the same shared before/after context
     # idea as phrase_context_guess.
+    # This lets one-away repair reuse the phrase heuristic without searching
+    # the entire board again.
     context_scores = {}
 
     for board_word in [w.lower() for w in guess.words]:
@@ -240,9 +243,11 @@ def score_guess_with_strategy(guess: Guess, strategy: str, word_embs, model) -> 
     return embedding_group_score(guess.words, word_embs)
 
 
-def repair_one_away_guess(words_remaining: list[str], incorrect: Guesses, one_away: Guesses, one_away_strategies: dict, one_away_weights: dict, word_embs, model) -> WeightedGuess:
+def repair_one_away_guess(words_remaining: list[str], incorrect: Guesses, one_away: Guesses, one_away_strategies: dict, one_away_weights: dict, word_embs, model, default_guess: Guess = None) -> WeightedGuess:
     # Try the newest near-misses first. A one-away guess means exactly one word
     # should change, so this only generates one-word replacement guesses.
+    # If a repair also lines up with the current best normal guess, it gets a
+    # small extra bump so we do not over-trust the near miss alone.
     best_guess = WeightedGuess(None, float("-inf"))
     best_strategy = "embedding"
     remaining = set(words_remaining)
@@ -271,6 +276,11 @@ def repair_one_away_guess(words_remaining: list[str], incorrect: Guesses, one_aw
                 # repaired candidate still has to score well on its own.
                 confidence_bonus = min(0.05, one_away_weights.get(near_miss, 0.0) * 0.05)
                 score *= REPAIR_BONUS + confidence_bonus
+                if default_guess is not None:
+                    # If the repair also overlaps the current normal best
+                    # guess, that is useful extra evidence for the swap.
+                    overlap = len(set(candidate.words) & set(default_guess.words))
+                    score += overlap * REPAIR_DEFAULT_OVERLAP_BONUS
 
                 if score > best_guess.weight:
                     best_guess = WeightedGuess(candidate, score)
