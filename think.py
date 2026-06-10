@@ -21,6 +21,8 @@ PHRASE_SCORE_NORMALIZER = 6.0
 PHRASE_BREADTH_PENALTY = 0.02
 
 PHRASE_STOPWORDS = {
+    # These are too generic to be useful as phrase anchors, so we skip them
+    # when searching for before/after patterns on the board.
     "about", "above", "after", "again", "against", "also", "among", "around",
     "because", "before", "being", "below", "between", "both", "could", "does",
     "doing", "down", "during", "each", "even", "first", "from", "further",
@@ -78,6 +80,8 @@ def get_homophones(word) -> list[str]:
 
 
 def random_untried_guess(words: list[str], incorrect: Guesses) -> Guess:
+    # Fallback helper shared by multiple strategies so we do not repeat a guess
+    # the bot has already tested and learned from.
     combos = [Guess(list(c)) for c in combinations(words, 4)]
     random.shuffle(combos)
 
@@ -90,6 +94,8 @@ def random_untried_guess(words: list[str], incorrect: Guesses) -> Guess:
 
 @lru_cache(maxsize=1)
 def phrase_candidate_words() -> tuple[str, ...]:
+    # Pull a manageable slice of common English words, then filter out very
+    # generic ones so the phrase heuristic looks for actual collocations.
     candidates = []
 
     for word in top_n_list("en", PHRASE_CANDIDATE_COUNT):
@@ -114,6 +120,8 @@ def cached_zipf_frequency(text: str) -> float:
 
 
 def phrase_collocation_score(candidate: str, word: str, candidate_before: bool) -> tuple[float, str]:
+    # `wordfreq` gives us a rough commonness score for the phrase itself; we
+    # keep only phrases that appear plausible enough to be worth exploring.
     if candidate == word:
         return 0.0, ""
 
@@ -129,6 +137,8 @@ def phrase_collocation_score(candidate: str, word: str, candidate_before: bool) 
 
 
 def embedding_group_score(guess_words: list[str], word_embs) -> float:
+    # Small tie-breaker: if two phrase candidates look similar, prefer the one
+    # whose board words also cluster semantically.
     if not word_embs:
         return 0.0
 
@@ -166,6 +176,8 @@ def embedding_similarity(words: list[str], incorrect: Guesses, word_embs) -> Wei
 
 
 def phrase_context_guess(word_list: list[str], incorrect: Guesses, word_embs=None) -> WeightedGuess:
+    # This strategy groups words by a shared context word, such as "___ card"
+    # or "birthday ___", then scores the four-word set it explains best.
     context_scores = {}
     board_words = [w.lower() for w in word_list]
     candidates = phrase_candidate_words()

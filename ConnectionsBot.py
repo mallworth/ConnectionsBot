@@ -8,6 +8,8 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 STRATEGY_ORDER = ["embedding", "phrase", "insertion", "homophone"]
 
 DEFAULT_WEIGHT_MATRIX = {
+    # Each profile gets one multiplier per strategy in STRATEGY_ORDER.
+    # The values stay simple so tuning can happen without changing code flow.
     "empty":       [1.0, 1.0, 1.0, 1.0],
     Color.YELLOW:  [1.0, 1.0, 1.0, 1.0],
     Color.GREEN:   [1.0, 1.0, 1.0, 1.0],
@@ -46,6 +48,8 @@ class ConnectionsBot:
         return embedding_group_score([w.lower() for w in guess.words], self.word_embs)
 
     def _strategy_profile_key(self):
+        # We only care about which colors are already solved, not how many
+        # guesses or mistakes happened inside those solved groups.
         guessed_colors = set(color for _, color in self.game_state.correct_guess_groups.values())
 
         if Color.PURPLE in guessed_colors:
@@ -66,6 +70,8 @@ class ConnectionsBot:
         return dict(zip(STRATEGY_ORDER, weights[:len(STRATEGY_ORDER)]))
 
     def _rotated_strategy_priority(self, profile_key) -> list[str]:
+        # Every wrong guess advances the queue, so the bot explores a different
+        # strategy order even before it has found a first correct group.
         priorities = STRATEGY_PRIORITIES[profile_key]
         rotation = self.game_state.mistakes % len(priorities)
         return priorities[rotation:] + priorities[:rotation]
@@ -106,6 +112,7 @@ class ConnectionsBot:
         }
 
         for strategy, weighted_guess in strategy_guesses.items():
+            # Blend the base stage profile with the current rotated priority.
             weighted_guess.weight *= base_weights[strategy] * priority_weights[strategy]
 
         print()
