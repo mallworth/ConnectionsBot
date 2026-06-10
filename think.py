@@ -1,4 +1,5 @@
 from Guesses import *
+from functools import lru_cache
 import numpy as np
 import random
 from itertools import combinations
@@ -9,6 +10,29 @@ from nltk.corpus import wordnet
 from nltk.corpus import words
 import pronouncing
 from itertools import product
+from wordfreq import top_n_list, zipf_frequency
+
+
+PHRASE_CANDIDATE_COUNT = 8000
+MIN_CONTEXT_WORD_ZIPF = 3.2
+MAX_CONTEXT_WORD_ZIPF = 5.6
+MIN_PHRASE_ZIPF = 3.6
+PHRASE_SCORE_NORMALIZER = 6.0
+PHRASE_BREADTH_PENALTY = 0.02
+
+PHRASE_STOPWORDS = {
+    "about", "above", "after", "again", "against", "also", "among", "around",
+    "because", "before", "being", "below", "between", "both", "could", "does",
+    "doing", "down", "during", "each", "even", "first", "from", "further",
+    "good", "have", "having", "here", "hers", "himself", "into", "itself",
+    "just", "know", "known", "like", "made", "make", "many", "more", "most",
+    "much", "other", "ours", "over", "people", "same", "said", "says", "see",
+    "should", "some", "still", "such", "take", "than", "that", "their",
+    "them", "then", "there", "these", "they", "this", "those", "thought",
+    "through", "time", "today", "under", "until", "used", "using", "very",
+    "want", "well", "were", "what", "when", "where", "which", "while", "will",
+    "with", "work", "would", "year", "years", "your",
+}
 
 
 # === Helper functions ===
@@ -53,14 +77,75 @@ def get_homophones(word) -> list[str]:
     return homophones
 
 
+def random_untried_guess(words: list[str], incorrect: Guesses) -> Guess:
+    combos = [Guess(list(c)) for c in combinations(words, 4)]
+    random.shuffle(combos)
+
+    for guess in combos:
+        if guess not in incorrect.guesses:
+            return guess
+
+    return Guess(random.sample(words, 4))
+
+
+@lru_cache(maxsize=1)
+def phrase_candidate_words() -> tuple[str, ...]:
+    candidates = []
+
+    for word in top_n_list("en", PHRASE_CANDIDATE_COUNT):
+        word = word.lower()
+        if not word.isalpha():
+            continue
+        if len(word) < 3 or len(word) > 14:
+            continue
+        if word in PHRASE_STOPWORDS:
+            continue
+        word_freq = cached_zipf_frequency(word)
+        if not MIN_CONTEXT_WORD_ZIPF <= word_freq <= MAX_CONTEXT_WORD_ZIPF:
+            continue
+        candidates.append(word)
+
+    return tuple(candidates)
+
+
+@lru_cache(maxsize=300000)
+def cached_zipf_frequency(text: str) -> float:
+    return zipf_frequency(text, "en")
+
+
+def phrase_collocation_score(candidate: str, word: str, candidate_before: bool) -> tuple[float, str]:
+    if candidate == word:
+        return 0.0, ""
+
+    phrase = f"{candidate} {word}" if candidate_before else f"{word} {candidate}"
+    phrase_freq = cached_zipf_frequency(phrase)
+    if phrase_freq < MIN_PHRASE_ZIPF:
+        return 0.0, phrase
+
+    candidate_freq = cached_zipf_frequency(candidate)
+    generic_penalty = max(0.0, candidate_freq - 5.0) * 0.7
+
+    return max(0.0, phrase_freq - generic_penalty), phrase
+
+
+def embedding_group_score(guess_words: list[str], word_embs) -> float:
+    if not word_embs:
+        return 0.0
+
+    embeddings = [word_embs[w] for w in guess_words if w in word_embs]
+    if len(embeddings) != 4:
+        return 0.0
+
+    pair_idxs = list(combinations(range(4), 2))
+    return max(0.0, np.mean([cosine_sim(embeddings[i], embeddings[j]) for i, j in pair_idxs]))
+
+
 # === Guessing functions ===
 # NOTE: functions used to inform ConnectionsBot.guess() should go here
 
 def embedding_similarity(words: list[str], incorrect: Guesses, word_embs) -> WeightedGuess:
     combos = [Guess(list(c)) for c in combinations(words, 4)]
-    for guess in combos:
-        if guess in incorrect.guesses:
-            combos.remove(guess)
+    combos = [guess for guess in combos if guess not in incorrect.guesses]
 
     bestguess = WeightedGuess(None, float("-inf"))
     # print(word_embs.keys())
@@ -75,9 +160,52 @@ def embedding_similarity(words: list[str], incorrect: Guesses, word_embs) -> Wei
             bestguess = WeightedGuess(c, score)
 
     if bestguess.guess is None:
-        return WeightedGuess(Guess(random.sample(words, 4)), 0.0)
+        return WeightedGuess(random_untried_guess(words, incorrect), 0.0)
 
     return bestguess
+
+
+def phrase_context_guess(word_list: list[str], incorrect: Guesses, word_embs=None) -> WeightedGuess:
+    context_scores = {}
+    board_words = [w.lower() for w in word_list]
+    candidates = phrase_candidate_words()
+
+    for board_word in board_words:
+        for candidate in candidates:
+            before_score, before_phrase = phrase_collocation_score(candidate, board_word, True)
+            if before_score > 0:
+                context_scores.setdefault(("before", candidate), []).append((board_word, before_score, before_phrase))
+
+            after_score, after_phrase = phrase_collocation_score(candidate, board_word, False)
+            if after_score > 0:
+                context_scores.setdefault(("after", candidate), []).append((board_word, after_score, after_phrase))
+
+    best_guess = WeightedGuess(None, float("-inf"))
+
+    for context, scored_words in context_scores.items():
+        if len(scored_words) < 4:
+            continue
+
+        scored_words.sort(key=lambda x: x[1], reverse=True)
+
+        for combo in combinations(scored_words[:8], 4):
+            guess_words = [word for word, _, _ in combo]
+            guess = Guess(guess_words)
+            if guess in incorrect.guesses:
+                continue
+
+            phrase_score = np.mean([score for _, score, _ in combo]) / PHRASE_SCORE_NORMALIZER
+            semantic_score = embedding_group_score(guess_words, word_embs)
+            breadth_penalty = max(0, len(scored_words) - 4) * PHRASE_BREADTH_PENALTY
+            normalized_score = min(1.0, (phrase_score * 0.75) + (semantic_score * 0.25) - breadth_penalty)
+
+            if normalized_score > best_guess.weight:
+                best_guess = WeightedGuess(guess, normalized_score)
+
+    if best_guess.guess is None:
+        return WeightedGuess(random_untried_guess(word_list, incorrect), 0.0)
+
+    return best_guess
 
 
 # Go through each sense of each word in wordnet, if other words in that sense return that guess
@@ -98,10 +226,7 @@ def wordnet_guess(words: list[str], incorrect: Guesses) -> WeightedGuess:
                     continue
 
     # fall back to random guess for now
-    guess = Guess(random.sample(words, 4))
-
-    while guess in incorrect.guesses:
-        guess = Guess(random.sample(words, 4))
+    guess = random_untried_guess(words, incorrect)
     return WeightedGuess(guess, 1.0)
 
 
@@ -133,19 +258,22 @@ def char_insertion(word_list: list[str], incorrect: Guesses, model) -> WeightedG
         word_groups.append(mod_words[:3])
 
     if len(word_groups) < 4:
-        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+        return WeightedGuess(random_untried_guess(word_list, incorrect), 0.0)
 
     res = WeightedGuess(None, float("-inf"))
 
     for c in product(*word_groups):
         if len(set(c)) == len(c):
             most_similar, weight = n_most_similar(list(c), model)
-            guess = Guess([word_to_original[w] for w in most_similar])
+            originals = [word_to_original[w] for w in most_similar]
+            if len(set(originals)) != 4:
+                continue
+            guess = Guess(originals)
             if weight > res.weight and guess not in incorrect.guesses:
                 res = WeightedGuess(guess, weight)
 
     if res.guess is None:
-        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+        return WeightedGuess(random_untried_guess(word_list, incorrect), 0.0)
 
     return res
 
@@ -167,7 +295,7 @@ def similar_homophones(word_list: list[str], incorrect: Guesses, model) -> Weigh
         homophone_groups.append(homophones)
 
     if len(homophone_groups) < 4:
-        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+        return WeightedGuess(random_untried_guess(word_list, incorrect), 0.0)
 
     homophone_groups = [g[:3] for g in homophone_groups]    # reduce size of homoephone groups to save time
     res = WeightedGuess(None, float("-inf"))
@@ -175,13 +303,14 @@ def similar_homophones(word_list: list[str], incorrect: Guesses, model) -> Weigh
     for c in product(*homophone_groups):
         if len(set(c)) == len(c):
             most_similar, weight = n_most_similar(list(c), model)
-            guess = Guess([homophone_to_original[h] for h in most_similar])
+            originals = [homophone_to_original[h] for h in most_similar]
+            if len(set(originals)) != 4:
+                continue
+            guess = Guess(originals)
             if weight > res.weight and guess not in incorrect.guesses:
                 res = WeightedGuess(guess, weight)
 
     if res.guess is None:
-        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+        return WeightedGuess(random_untried_guess(word_list, incorrect), 0.0)
 
     return res
-
-
