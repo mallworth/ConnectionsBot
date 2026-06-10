@@ -19,9 +19,13 @@ class Guesses:
     def __init__(self):
         # List of guesses made this game. Each guess is 4 distinct strings from the 16 string grid
         self.guesses: list[Guess] = []
+        self.one_away_guesses = []
 
-    def add_guess(self, guess: Guess):
+    def add_guess(self, guess: Guess,one_away: bool = False):
         self.guesses.append(guess)
+
+        if one_away:
+            self.one_away_guesses.append(guess)
         
     def __repr__(self):
         return "\n".join("\t".join(guess.words) for guess in self.guesses)

@@ -23,7 +23,7 @@ class Game:
                     "color": Color(int(c["level"])),
                     "status": "win" if self.correct >= 4 else "active"  # Status of game, either "win", "active", or "lose"
                 }
-            if sum(g != gt for g, gt in zip(guess.words, c["words"])) == 1:
+            if len(set(w.lower() for w in guess.words) & set(w.lower() for w in c["words"])) == 3: # replaced with ordered set
                 # One away
                 self.mistakes += 1
                 return {
