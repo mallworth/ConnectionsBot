@@ -14,7 +14,10 @@ class Game:
 
     def process_guess(self, guess: Guess):
         for c in self.__categories:
-            if set([w.lower() for w in guess.words]) == set([w.lower() for w in c["words"]]):
+            guess_words = set([w.lower() for w in guess.words])
+            category_words = set([w.lower() for w in c["words"]])
+
+            if guess_words == category_words:
                 # Correctly guessed!
                 self.correct += 1
                 return {
@@ -23,8 +26,9 @@ class Game:
                     "color": Color(int(c["level"])),
                     "status": "win" if self.correct >= 4 else "active"  # Status of game, either "win", "active", or "lose"
                 }
-            if sum(g != gt for g, gt in zip(guess.words, c["words"])) == 1:
-                # One away
+            if len(guess_words & category_words) == 3:
+                # Connections guesses are unordered; one-away means three of
+                # the four guessed words belong to the same real group.
                 self.mistakes += 1
                 return {
                     "type": "oneaway",

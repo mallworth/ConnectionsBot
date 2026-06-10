@@ -19,6 +19,8 @@ class GameState:
         self.correct_guess_groups: dict[Guess, (str, Color)] = {} # Dictionary of correct guesses made and their associated "theme" and the "color" of the guess (indicates how challenging, scale of 0-3)
         
         self.one_away_guess_groups: Guesses = Guesses() # Connections notifies you when 3 of 4 words you guessed are in a group. This variable tracks those guesses
+        self.one_away_guess_strategies: dict[Guess, str] = {} # Strategy used for each near miss, so repair can score swaps with the same idea
+        self.one_away_guess_weights: dict[Guess, float] = {} # Original strategy score for each near miss, used as a small confidence signal
         self.incorrect_guess_groups: Guesses = Guesses()
         self.guesses: Guesses = Guesses() # ALL guesses made in this game
 
@@ -34,9 +36,13 @@ class GameState:
             self.words_remaining = list(set(self.words_remaining) - set(guess.words)) # update words remaining
 
 
-    def add_incorrect_guess(self, guess: Guess, one_away: bool):
+    def add_incorrect_guess(self, guess: Guess, one_away: bool, strategy: str = None, weight: float = 0.0):
         if one_away:    # If this guess was 1 away from correct, track that
             self.one_away_guess_groups.add_guess(guess)
+            # Store optional metadata only for one-away guesses because those
+            # are the guesses worth repairing on later turns.
+            self.one_away_guess_strategies[guess] = strategy
+            self.one_away_guess_weights[guess] = weight
         self.guesses.add_guess(guess)
         self.incorrect_guess_groups.add_guess(guess)
 
@@ -48,6 +54,5 @@ class GameState:
 
     def game_lost(self) -> bool:
         return self.mistakes >= 4
-
 
 

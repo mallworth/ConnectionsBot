@@ -19,6 +19,7 @@ MAX_CONTEXT_WORD_ZIPF = 5.6
 MIN_PHRASE_ZIPF = 3.6
 PHRASE_SCORE_NORMALIZER = 6.0
 PHRASE_BREADTH_PENALTY = 0.02
+REPAIR_BONUS = 1.08
 
 PHRASE_STOPWORDS = {
     # These are too generic to be useful as phrase anchors, so we skip them
@@ -93,6 +94,13 @@ def random_untried_guess(words: list[str], incorrect: Guesses) -> Guess:
 
 
 @lru_cache(maxsize=1)
+def english_word_set() -> set[str]:
+    # Cache the NLTK word list so insertion scoring does not rebuild it for
+    # every one-away repair candidate.
+    return set(words.words())
+
+
+@lru_cache(maxsize=1)
 def phrase_candidate_words() -> tuple[str, ...]:
     # Pull a manageable slice of common English words, then filter out very
     # generic ones so the phrase heuristic looks for actual collocations.
@@ -137,8 +145,8 @@ def phrase_collocation_score(candidate: str, word: str, candidate_before: bool) 
 
 
 def embedding_group_score(guess_words: list[str], word_embs) -> float:
-    # Small tie-breaker: if two phrase candidates look similar, prefer the one
-    # whose board words also cluster semantically.
+    # Shared scorer for one fixed guess: higher means the four board words are
+    # more semantically close under the embedding model.
     if not word_embs:
         return 0.0
 
@@ -148,6 +156,132 @@ def embedding_group_score(guess_words: list[str], word_embs) -> float:
 
     pair_idxs = list(combinations(range(4), 2))
     return max(0.0, np.mean([cosine_sim(embeddings[i], embeddings[j]) for i, j in pair_idxs]))
+
+
+def phrase_guess_score(guess: Guess, word_embs=None) -> float:
+    # Score one fixed 4-word guess using the same shared before/after context
+    # idea as phrase_context_guess.
+    context_scores = {}
+
+    for board_word in [w.lower() for w in guess.words]:
+        for candidate in phrase_candidate_words():
+            before_score, _ = phrase_collocation_score(candidate, board_word, True)
+            if before_score > 0:
+                context_scores.setdefault(("before", candidate), []).append((board_word, before_score))
+
+            after_score, _ = phrase_collocation_score(candidate, board_word, False)
+            if after_score > 0:
+                context_scores.setdefault(("after", candidate), []).append((board_word, after_score))
+
+    best_score = 0.0
+    for scored_words in context_scores.values():
+        if len(scored_words) != 4:
+            continue
+
+        guess_words = [word for word, _ in scored_words]
+        phrase_score = np.mean([score for _, score in scored_words]) / PHRASE_SCORE_NORMALIZER
+        semantic_score = embedding_group_score(guess_words, word_embs)
+        best_score = max(best_score, min(1.0, (phrase_score * 0.75) + (semantic_score * 0.25)))
+
+    return best_score
+
+
+@lru_cache(maxsize=2048)
+def char_insertions_for_word(word: str) -> tuple[str, ...]:
+    # Generate a small, deterministic set of insertion variants for one fixed
+    # board word, matching the lightweight char_insertion strategy.
+    alphabet = list("abcdefghijklmnopqrstuvwxyz")
+    res = []
+
+    for i in range(0, len(word)):
+        for char in alphabet:
+            mod_word = word[0:i] + char + word[i:]
+            if mod_word.lower() in english_word_set():
+                res.append(mod_word)
+
+    return tuple(sorted(set(res))[:3])
+
+
+def max_variant_similarity_score(variant_groups: list[tuple[str, ...]], model) -> float:
+    # Insertion and homophone repairs score one candidate by checking whether
+    # its transformed variants form a semantically coherent group.
+    if model is None or len(variant_groups) != 4 or any(len(group) == 0 for group in variant_groups):
+        return 0.0
+
+    best_score = 0.0
+    for candidate_variants in product(*variant_groups):
+        _, score = n_most_similar(list(candidate_variants), model)
+        best_score = max(best_score, score)
+
+    return best_score
+
+
+def char_insertion_guess_score(guess: Guess, model) -> float:
+    variant_groups = [char_insertions_for_word(w) for w in guess.words]
+    return max_variant_similarity_score(variant_groups, model)
+
+
+def homophone_guess_score(guess: Guess, model) -> float:
+    # This mirrors similar_homophones, but scores one specific candidate guess
+    # instead of searching the whole remaining board.
+    variant_groups = [tuple(sorted(set(get_homophones(w)))[:3]) for w in guess.words]
+    return max_variant_similarity_score(variant_groups, model)
+
+
+def score_guess_with_strategy(guess: Guess, strategy: str, word_embs, model) -> float:
+    # A one-away guess is most useful when repaired with the same heuristic that
+    # nearly succeeded in the first place.
+    if strategy == "phrase":
+        return phrase_guess_score(guess, word_embs)
+    if strategy == "insertion":
+        return char_insertion_guess_score(guess, model)
+    if strategy == "homophone":
+        return homophone_guess_score(guess, model)
+    return embedding_group_score(guess.words, word_embs)
+
+
+def repair_one_away_guess(words_remaining: list[str], incorrect: Guesses, one_away: Guesses, one_away_strategies: dict, one_away_weights: dict, word_embs, model) -> WeightedGuess:
+    # Try the newest near-misses first. A one-away guess means exactly one word
+    # should change, so this only generates one-word replacement guesses.
+    best_guess = WeightedGuess(None, float("-inf"))
+    best_strategy = "embedding"
+    remaining = set(words_remaining)
+
+    for near_miss in reversed(one_away.guesses):
+        if len([w for w in near_miss.words if w in remaining]) < 3:
+            continue
+
+        strategy = one_away_strategies.get(near_miss, "embedding")
+
+        for old_word in near_miss.words:
+            kept_words = [w for w in near_miss.words if w != old_word]
+            if not set(kept_words).issubset(remaining):
+                continue
+
+            for replacement in words_remaining:
+                if replacement in near_miss.words:
+                    continue
+
+                candidate = Guess(kept_words + [replacement])
+                if candidate in incorrect.guesses:
+                    continue
+
+                score = score_guess_with_strategy(candidate, strategy, word_embs, model)
+                # Original near-miss confidence gives a small nudge, but the
+                # repaired candidate still has to score well on its own.
+                confidence_bonus = min(0.05, one_away_weights.get(near_miss, 0.0) * 0.05)
+                score *= REPAIR_BONUS + confidence_bonus
+
+                if score > best_guess.weight:
+                    best_guess = WeightedGuess(candidate, score)
+                    best_strategy = strategy
+
+    if best_guess.guess is None:
+        return WeightedGuess(None, 0.0)
+
+    # Keep the source strategy attached so another one-away repair can reuse it.
+    best_guess.strategy = best_strategy
+    return best_guess
 
 
 # === Guessing functions ===
@@ -244,7 +378,7 @@ def wordnet_guess(words: list[str], incorrect: Guesses) -> WeightedGuess:
 
 # Try adding a character in each position of a word. If resulting string is a valid word, store it and find 4 most similar 
 def char_insertion(word_list: list[str], incorrect: Guesses, model) -> WeightedGuess:
-    english_words = set(words.words())
+    english_words = english_word_set()
     alphabet = list("abcdefghijklmnopqrstuvwxyz")
     
     word_to_original = {}

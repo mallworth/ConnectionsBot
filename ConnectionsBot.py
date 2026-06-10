@@ -29,6 +29,7 @@ STRATEGY_PRIORITIES = {
 }
 
 PRIORITY_MULTIPLIERS = [1.35, 1.15, 1.0, 0.85]
+REPAIR_ACCEPT_RATIO = 0.9
 
 class ConnectionsBot:
     def __init__(self, words, weight_matrix: dict[Color, list[float]] = None):
@@ -36,6 +37,9 @@ class ConnectionsBot:
         self.game_state = GameState([w.lower() for w in words])
         self.model = model
         self.weight_matrix = weight_matrix if weight_matrix is not None else DEFAULT_WEIGHT_MATRIX
+        # Remember which strategy produced each returned guess so one-away
+        # feedback can guide a later one-word repair.
+        self.guess_strategy_info = {}
 
         embs = {}
         for w in words:
@@ -122,7 +126,28 @@ class ConnectionsBot:
         print(f"Insert weight: {insert_guess.weight}, guess: {insert_guess.guess.words}")
         print(f"Homophone weight: {homophone_guess.weight}, guess: {homophone_guess.guess.words}")
 
-        return max(strategy_guesses.values(), key=lambda x: x.weight).guess
+        best_strategy, best_default = max(strategy_guesses.items(), key=lambda x: x[1].weight)
+
+        repair_guess: WeightedGuess = repair_one_away_guess(
+            self.game_state.words_remaining,
+            self.game_state.incorrect_guess_groups,
+            self.game_state.one_away_guess_groups,
+            self.game_state.one_away_guess_strategies,
+            self.game_state.one_away_guess_weights,
+            self.word_embs,
+            self.model,
+        )
+
+        # One-away feedback is strong evidence, so accept a repair even when it
+        # is only close to the normal best strategy score.
+        if repair_guess.guess is not None and repair_guess.weight >= best_default.weight * REPAIR_ACCEPT_RATIO:
+            print(f"One-away repair weight: {repair_guess.weight}, guess: {repair_guess.guess.words}")
+            repair_strategy = getattr(repair_guess, "strategy", "embedding")
+            self.guess_strategy_info[repair_guess.guess] = (repair_strategy, repair_guess.weight)
+            return repair_guess.guess
+
+        self.guess_strategy_info[best_default.guess] = (best_strategy, best_default.weight)
+        return best_default.guess
     
     # Update game state based on feedback from game in response to a guess
     # returns status of game after guess
@@ -136,6 +161,9 @@ class ConnectionsBot:
             self.game_state.add_correct_guess(guess, guess_category, guess_color)
             print(f"correctly guessed: {guess.words} for category '{guess_category}' of color {guess_color.name}")
         else:
-            self.game_state.add_incorrect_guess(guess, guess_type == "oneaway")
+            strategy, weight = self.guess_strategy_info.get(guess, (None, 0.0))
+            if guess_type == "oneaway":
+                print(f"one away: {guess.words} from strategy '{strategy}'")
+            self.game_state.add_incorrect_guess(guess, guess_type == "oneaway", strategy, weight)
 
         return guess_status
