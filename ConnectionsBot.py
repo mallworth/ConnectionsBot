@@ -1,6 +1,6 @@
 from GameState import GameState, Color
 from Guesses import Guess
-from SolutionSetPlanner import GROUP_PROFILE_WEIGHTS, SolutionSetPlanner
+from SolutionSetPlanner import INITIAL_GROUP_PROFILE_WEIGHTS, SolutionSetPlanner
 from think import *
 from sentence_transformers import SentenceTransformer
 
@@ -9,7 +9,7 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 STRATEGY_ORDER = ["embedding", "phrase", "insertion", "homophone"]
 
 # Legacy single-guess weights are kept so older experiment scripts still import
-# the same names. The active solver now uses GROUP_PROFILE_WEIGHTS in the planner.
+# the same names. The active solver now uses the planner's initial profile.
 DEFAULT_WEIGHT_MATRIX = {
     # Each profile gets one multiplier per strategy in STRATEGY_ORDER.
     # Phrase is weighted lower by default so normal turns stay close to the
@@ -41,7 +41,7 @@ class ConnectionsBot:
         self.game_state = GameState([w.lower() for w in words])
         self.model = model
         # The old weight matrix is kept for compatibility with older tests; the
-        # new full-set planner uses GROUP_PROFILE_WEIGHTS for hybrid scoring.
+        # new full-set planner starts with an embedding-only profile.
         self.weight_matrix = weight_matrix if weight_matrix is not None else DEFAULT_WEIGHT_MATRIX
         # Remember which planner slot produced each returned guess, so one-away
         # history still has useful debug metadata.
@@ -64,7 +64,7 @@ class ConnectionsBot:
             self.model,
             self.word_embs,
             self.embedding_sim_cache,
-            group_profile_weights or GROUP_PROFILE_WEIGHTS,
+            group_profile_weights or INITIAL_GROUP_PROFILE_WEIGHTS,
         )
 
     # Given a guess, return a score (higher = better guess)

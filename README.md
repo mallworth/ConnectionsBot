@@ -44,22 +44,31 @@ The global shortlist size is controlled near the top of `SolutionSetPlanner.py`:
 
 ```python
 GLOBAL_CANDIDATE_PREFILTER_BY_WORD_COUNT = {
-    16: 200,
-    12: 120,
-    8: 70,
+    16: 1800,
+    12: 1400,
+    8: 1250,
     4: 1,
 }
 GLOBAL_CANDIDATE_PREFILTER_DEFAULT = 200
 ```
 
-This means a fresh 16-word board still considers all possible groups cheaply, but expensive work is limited to about the top 200 groups. Smaller boards use smaller limits because there are fewer possible groups left. After that shortlist is formed, the planner scores each candidate under different group slot profiles. Then it combines non-overlapping candidates into complete sets that use every remaining word exactly once.
+This means a fresh 16-word board still considers all possible groups cheaply, but expensive work is limited to about the top 1,800 groups before the later wordplay scoring gets involved. Smaller boards use smaller limits because there are fewer possible groups left. After that shortlist is formed, the planner scores each candidate under different group slot profiles. Then it combines non-overlapping candidates into complete sets that use every remaining word exactly once.
 
 Each full set gets a `TOTAL` score. The bot submits the next group from the best ranked set.
 
-The current group slot profiles are easy to tune near the top of `SolutionSetPlanner.py`:
+The planner has two profile tables near the top of `SolutionSetPlanner.py`:
 
 ```python
-GROUP_PROFILE_WEIGHTS = {
+INITIAL_GROUP_PROFILE_WEIGHTS = {
+    "Group 1": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
+    "Group 2": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
+    "Group 3": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
+    "Group 4": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
+}
+```
+
+```python
+HYBRID_GROUP_PROFILE_WEIGHTS = {
     "Group 1": {"embedding": 1.0, "phrase": 0.15, "insertion": 0.0, "homophone": 0.0},
     "Group 2": {"embedding": 1.0, "phrase": 0.35, "insertion": 0.0, "homophone": 0.0},
     "Group 3": {"embedding": 0.45, "phrase": 1.0, "insertion": 0.25, "homophone": 0.25},
@@ -67,7 +76,11 @@ GROUP_PROFILE_WEIGHTS = {
 }
 ```
 
-The logic is that Group 1 and Group 2 are early high-confidence groups, so they mostly use embedding + phrase. Phrase is still active, but lighter early because phrase frequency can sometimes overpower a cleaner embedding group. Group 3 is phrase-heavy but allows a little insertion and homophone support. Group 4 is the weird/clever slot, where purple-style wordplay may live, so insertion and homophones are much stronger there.
+The bot starts with the simple embedding-only profile. After two correct groups are locked in, the planner switches to the hybrid profile and rebuilds the remaining plan under those weights.
+
+The hybrid profile is easy to tune near the top of `SolutionSetPlanner.py`:
+
+The logic is that Group 1 and Group 2 are early high-confidence groups, so the opening stays simple and embedding-only. Once two groups are solved, the bot starts allowing phrase, insertion, and homophone support. Group 3 is phrase-heavy but allows a little insertion and homophone support. Group 4 is the weird/clever slot, where purple-style wordplay may live, so insertion and homophones are much stronger there.
 
 If a heuristic has weight `0`, the planner does not compute that heuristic for that group. This matters most for insertion and homophone because those are heavier.
 

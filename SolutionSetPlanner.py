@@ -20,13 +20,21 @@ from think import (
 
 STRATEGY_ORDER = ["embedding", "phrase", "insertion", "homophone"]
 
-# These are the main knobs for the new set-based model. Group 1/2 stay focused
-# on semantic and phrase evidence; Group 3/4 allow more wordplay-style scoring.
-GROUP_PROFILE_WEIGHTS = {
-    "Group 1": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
-    "Group 2": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
-    "Group 3": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
-    "Group 4": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
+# These are the main knobs for the new set-based model. The bot starts with an
+# embedding-only profile, then switches to the richer hybrid profile after two
+# correct groups are locked in.
+INITIAL_GROUP_PROFILE_WEIGHTS = {
+    "Group 1": {"embedding": 1.0, "phrase": 0.9, "insertion": 0.0, "homophone": 0.0},
+    "Group 2": {"embedding": 1.0, "phrase": 0.9, "insertion": 0.0, "homophone": 0.0},
+    "Group 3": {"embedding": 1.0, "phrase": 0.9, "insertion": 0.0, "homophone": 0.0},
+    "Group 4": {"embedding": 1.0, "phrase": 0.9, "insertion": 0.0, "homophone": 0.0},
+}
+
+HYBRID_GROUP_PROFILE_WEIGHTS = {
+    "Group 1": {"embedding": 1.0, "phrase": 0.15, "insertion": 0.0, "homophone": 0.0},
+    "Group 2": {"embedding": 1.0, "phrase": 0.35, "insertion": 0.0, "homophone": 0.0},
+    "Group 3": {"embedding": 0.45, "phrase": 1.0, "insertion": 0.25, "homophone": 0.25},
+    "Group 4": {"embedding": 0.25, "phrase": 0.35, "insertion": 1.0, "homophone": 1.0},
 }
 
 # Full-set scores slightly favor earlier confident groups, but still include a
@@ -41,9 +49,9 @@ MAX_RANKED_SETS = 10
 # embedding-only evidence first, then run phrase/insertion/homophone only on
 # this shortlist. Tune these numbers to trade speed against recall.
 GLOBAL_CANDIDATE_PREFILTER_BY_WORD_COUNT = {
-    16: 1800,
-    12: 1400,
-    8: 1250,
+    16: 800,
+    12: 400,
+    8: 250,
     4: 1,
 }
 GLOBAL_CANDIDATE_PREFILTER_DEFAULT = 200
@@ -51,7 +59,7 @@ GLOBAL_CANDIDATE_PREFILTER_DEFAULT = 200
 TOP_CANDIDATES_PER_SLOT = 25
 CANDIDATE_PREFILTER_LIMIT = 40
 WORDPLAY_PREFILTER_LIMIT = 4
-PLANNER_PHRASE_CANDIDATE_LIMIT = 250
+PLANNER_PHRASE_CANDIDATE_LIMIT = 750
 FINAL_PAIR_CANDIDATE_LIMIT = 10
 ONE_AWAY_NEXT_GUESS_BONUS = 0.18
 REPEATED_ONE_AWAY_BONUS = 0.16
@@ -100,11 +108,14 @@ class SolutionSetPlanner:
         self.model = model
         self.word_embs = word_embs
         self.sim_cache = sim_cache
-        self.profile_weights = profile_weights if profile_weights is not None else GROUP_PROFILE_WEIGHTS
+        self.initial_profile_weights = INITIAL_GROUP_PROFILE_WEIGHTS
+        self.hybrid_profile_weights = HYBRID_GROUP_PROFILE_WEIGHTS
+        self.profile_weights = profile_weights if profile_weights is not None else self.initial_profile_weights
         self.solution_sets: list[CandidateSolutionSet] = []
         self.active_set: CandidateSolutionSet | None = None
         self._phrase_index_key: tuple[str, ...] | None = None
         self._phrase_contexts_by_word: dict[str, dict[tuple[str, str], float]] = {}
+        self._profile_mode = "initial"
 
     def next_guess(self, game_state: GameState) -> ScoredGuess | None:
         # The bot submits only one group, but that group now comes from the
@@ -186,6 +197,11 @@ class SolutionSetPlanner:
             remaining_groups = [group for group in self.active_set.groups if group.guess != guess]
             self.active_set.groups = remaining_groups
             self.active_set.total_score = self._score_solution_set(remaining_groups)
+        profile_changed = self._refresh_profile_mode(game_state)
+        if profile_changed:
+            print("Planner rebuilding under the new profile weights.")
+            self.rebuild_sets(game_state, "profile switch after correct guess")
+            return
 
         if self.active_set is not None and self._solution_set_is_valid(self.active_set, game_state):
             print("Planner kept the current set after the correct guess.")
@@ -236,6 +252,21 @@ class SolutionSetPlanner:
 
         print("Planner rebuilt because the incorrect guess exhausted the ranked sets.")
         self.rebuild_sets(game_state, "incorrect feedback")
+
+    def _refresh_profile_mode(self, game_state: GameState) -> bool:
+        # Start conservative, then switch to the hybrid profile after two
+        # correct groups are locked in.
+        correct_count = len(game_state.correct_guess_groups)
+        new_mode = "hybrid" if correct_count >= 2 else "initial"
+        if new_mode != self._profile_mode:
+            self._profile_mode = new_mode
+            self.profile_weights = (
+                self.hybrid_profile_weights if new_mode == "hybrid" else self.initial_profile_weights
+            )
+            self._phrase_index_key = None
+            print(f"Planner profile switched to {new_mode} after {correct_count} correct guesses.")
+            return True
+        return False
 
     def _remaining_group_slots(self, game_state: GameState) -> list[str]:
         # Solved colors remove their matching profile for future rebuilds. If an
