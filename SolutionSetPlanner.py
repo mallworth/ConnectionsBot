@@ -23,19 +23,31 @@ STRATEGY_ORDER = ["embedding", "phrase", "insertion", "homophone"]
 # These are the main knobs for the new set-based model. Group 1/2 stay focused
 # on semantic and phrase evidence; Group 3/4 allow more wordplay-style scoring.
 GROUP_PROFILE_WEIGHTS = {
-    "Group 1": {"embedding": 1.0, "phrase": 0.15, "insertion": 0.0, "homophone": 0.0},
-    "Group 2": {"embedding": 1.0, "phrase": 0.35, "insertion": 0.0, "homophone": 0.0},
-    "Group 3": {"embedding": 0.45, "phrase": 1.0, "insertion": 0.25, "homophone": 0.25},
-    "Group 4": {"embedding": 0.25, "phrase": 0.35, "insertion": 1.0, "homophone": 1.0},
+    "Group 1": {"embedding": 1.5, "phrase": 1.0, "insertion": 0.0, "homophone": 0.0},
+    "Group 2": {"embedding": 1.5, "phrase": 1.0, "insertion": 0.0, "homophone": 0.0},
+    "Group 3": {"embedding": 1.0, "phrase": 0.85, "insertion": 0.40, "homophone": 0.25},
+    "Group 4": {"embedding": 1.0, "phrase": 0.7, "insertion": 0.4, "homophone": 0.4},
 }
 
 # Full-set scores slightly favor earlier confident groups, but still include a
 # mild balance penalty so weak leftover groups do not get hidden by one strong pick.
-GROUP_SET_MULTIPLIERS = {"Group 1": 1.15, "Group 2": 1.10, "Group 3": 1.0, "Group 4": 1.0}
+GROUP_SET_MULTIPLIERS = {"Group 1": 1.25, "Group 2": 1.150, "Group 3": 1.0, "Group 4": 1.0}
 BALANCE_PENALTY_WEIGHT = 0.08
 
 # Keep only a few ranked plans at a time, then rebuild if feedback exhausts them.
-MAX_RANKED_SETS = 4
+MAX_RANKED_SETS = 10
+
+# Global candidate prefilter: score every possible 4-word group with cheap
+# embedding-only evidence first, then run phrase/insertion/homophone only on
+# this shortlist. Tune these numbers to trade speed against recall.
+GLOBAL_CANDIDATE_PREFILTER_BY_WORD_COUNT = {
+    16: 1800,
+    12: 1400,
+    8: 1250,
+    4: 1,
+}
+GLOBAL_CANDIDATE_PREFILTER_DEFAULT = 200
+
 TOP_CANDIDATES_PER_SLOT = 25
 CANDIDATE_PREFILTER_LIMIT = 40
 WORDPLAY_PREFILTER_LIMIT = 4
@@ -127,19 +139,28 @@ class SolutionSetPlanner:
         # Rebuild plans from only the leftover words, using solved colors to
         # remove the matching group profiles from future full-set planning.
         slots = self._remaining_group_slots(game_state)
-        candidate_guesses = self._generate_candidate_guesses(game_state)
+        all_candidate_guesses = self._generate_candidate_guesses(game_state)
 
-        if not slots or not candidate_guesses:
+        if not slots or not all_candidate_guesses:
             self.solution_sets = []
             self.active_set = None
             return
 
-        print(
-            f"\nPlanner rebuilding sets ({reason}) with "
-            f"{len(game_state.words_remaining)} words and {len(candidate_guesses)} candidate groups."
-        )
         repair_slot = slots[0] if one_away_focus is not None else None
         forced_repair = self._best_repeated_core_repair(game_state) if one_away_focus is not None else None
+        candidate_guesses = self._global_prefilter_candidate_guesses(
+            all_candidate_guesses,
+            game_state,
+            one_away_focus,
+            forced_repair,
+        )
+
+        print(
+            f"\nPlanner rebuilding sets ({reason}) with "
+            f"{len(game_state.words_remaining)} words, "
+            f"{len(all_candidate_guesses)} valid groups, and "
+            f"{len(candidate_guesses)} globally shortlisted groups."
+        )
         slot_candidates = {
             slot: self._rank_candidates_for_slot(
                 candidate_guesses,
@@ -240,6 +261,61 @@ class SolutionSetPlanner:
             if self._group_is_allowed(guess, game_state):
                 candidates.append(guess)
         return candidates
+
+    def _global_prefilter_candidate_guesses(
+        self,
+        candidates: list[Guess],
+        game_state: GameState,
+        one_away_focus: Guess | None = None,
+        forced_repair: Guess | None = None,
+    ) -> list[Guess]:
+        # Efficiency layer: score all valid 4-word groups using only cheap
+        # embedding evidence, keep a tunable shortlist, and let the slot-level
+        # scorer run phrase/insertion/homophone only on that shortlist.
+        limit = GLOBAL_CANDIDATE_PREFILTER_BY_WORD_COUNT.get(
+            len(game_state.words_remaining),
+            GLOBAL_CANDIDATE_PREFILTER_DEFAULT,
+        )
+
+        if limit <= 0 or len(candidates) <= limit:
+            return candidates
+
+        protected_guesses = set()
+        if forced_repair is not None:
+            protected_guesses.add(forced_repair)
+
+        if one_away_focus is not None:
+            # Preserve all one-word swaps after one-away feedback. These are
+            # strategically important even when their embedding score is not in
+            # the top K.
+            for guess in candidates:
+                if self._word_overlap(guess, one_away_focus) == 3:
+                    protected_guesses.add(guess)
+
+        scored_candidates = []
+        for guess in candidates:
+            score = embedding_group_score(guess.words, self.word_embs, self.sim_cache)
+            if one_away_focus is not None:
+                score += self._one_away_bonus(guess, game_state, one_away_focus)
+            scored_candidates.append((score, guess))
+
+        scored_candidates.sort(key=lambda item: item[0], reverse=True)
+
+        shortlisted = []
+        seen = set()
+        for guess in protected_guesses:
+            if guess in candidates and guess not in seen:
+                shortlisted.append(guess)
+                seen.add(guess)
+
+        for _, guess in scored_candidates:
+            if len(shortlisted) >= limit:
+                break
+            if guess not in seen:
+                shortlisted.append(guess)
+                seen.add(guess)
+
+        return shortlisted
 
     def _rank_candidates_for_slot(
         self,
