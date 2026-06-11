@@ -39,11 +39,14 @@ HYBRID_GROUP_PROFILE_WEIGHTS = {
 
 # Full-set scores slightly favor earlier confident groups, but still include a
 # mild balance penalty so weak leftover groups do not get hidden by one strong pick.
-GROUP_SET_MULTIPLIERS = {"Group 1": 1.25, "Group 2": 1.150, "Group 3": 1.0, "Group 4": 1.0}
+GROUP_SET_MULTIPLIERS = {"Group 1": 1.15, "Group 2": 1.10, "Group 3": 1.0, "Group 4": 1.0}
+
+# Soft penalty that keeps one extremely strong group from overpowering a weak
+# remaining tail in the same solution set.
 BALANCE_PENALTY_WEIGHT = 0.08
 
 # Keep only a few ranked plans at a time, then rebuild if feedback exhausts them.
-MAX_RANKED_SETS = 10
+MAX_RANKED_SETS = 5
 
 # Global candidate prefilter: score every possible 4-word group with cheap
 # embedding-only evidence first, then run phrase/insertion/homophone only on
@@ -54,18 +57,18 @@ GLOBAL_CANDIDATE_PREFILTER_BY_WORD_COUNT = {
     8: 250,
     4: 1,
 }
-GLOBAL_CANDIDATE_PREFILTER_DEFAULT = 200
 
-TOP_CANDIDATES_PER_SLOT = 25
-CANDIDATE_PREFILTER_LIMIT = 40
-WORDPLAY_PREFILTER_LIMIT = 4
-PLANNER_PHRASE_CANDIDATE_LIMIT = 750
-FINAL_PAIR_CANDIDATE_LIMIT = 10
-ONE_AWAY_NEXT_GUESS_BONUS = 0.18
-REPEATED_ONE_AWAY_BONUS = 0.16
-SHARED_CORE_REPLACEMENT_BONUS = 0.20
-SHARED_CORE_EMBEDDING_BONUS = 0.80
-MAX_DEBUG_SETS = 4
+GLOBAL_CANDIDATE_PREFILTER_DEFAULT = 200  # Default shortlist size when the remaining board size has no custom entry.
+TOP_CANDIDATES_PER_SLOT = 25  # How many candidates to keep per slot after the rough scoring pass.
+CANDIDATE_PREFILTER_LIMIT = 40  # Rough-score cutoff for the main slot ranking pass before heavier scoring.
+WORDPLAY_PREFILTER_LIMIT = 4  # Smaller cutoff used when insertion or homophone scoring is active.
+PLANNER_PHRASE_CANDIDATE_LIMIT = 750  # How many board words the phrase heuristic checks when building its context index.
+FINAL_PAIR_CANDIDATE_LIMIT = 10  # How many candidate pairings to test when only two groups remain.
+ONE_AWAY_NEXT_GUESS_BONUS = 0.18  # Bonus for a next guess that repairs a one-away clue by sharing the 3-word core.
+REPEATED_ONE_AWAY_BONUS = 0.16  # Extra boost when repeated one-away clues point to the same shared core.
+SHARED_CORE_REPLACEMENT_BONUS = 0.20  # Extra reward for a fresh replacement word that fits a repeated one-away core.
+SHARED_CORE_EMBEDDING_BONUS = 0.80  # Semantic bonus for how well the replacement word fits the repeated core.
+MAX_DEBUG_SETS = 4  # Limit the amount of ranked-set debug output printed per rebuild.
 
 GROUP_SLOT_ORDER = ["Group 1", "Group 2", "Group 3", "Group 4"]
 COLOR_TO_GROUP_SLOT = {
