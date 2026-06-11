@@ -26,9 +26,8 @@ class Game:
                     "color": Color(int(c["level"])),
                     "status": "win" if self.correct >= 4 else "active"  # Status of game, either "win", "active", or "lose"
                 }
-            if len(guess_words & category_words) == 3:
-                # Connections guesses are unordered; one-away means three of
-                # the four guessed words belong to the same real group.
+            if len(set(w.lower() for w in guess.words) & set(w.lower() for w in c["words"])) == 3: # replaced with ordered set
+                # One away
                 self.mistakes += 1
                 return {
                     "type": "oneaway",

@@ -32,7 +32,7 @@ def test():
         won += 1 if gameres else 0
         played += 1
 
-    print(f"Win rate: {won / 100}")
+    print(f"Win rate: {won / played * 100}")
     print(f"Games played: {played}")
     print(f"Games won: {won}")
 
