@@ -43,7 +43,7 @@ GROUP_SET_MULTIPLIERS = {"Group 1": 1.15, "Group 2": 1.10, "Group 3": 1.0, "Grou
 
 # Soft penalty that keeps one extremely strong group from overpowering a weak
 # remaining tail in the same solution set.
-BALANCE_PENALTY_WEIGHT = 0.08
+BALANCE_PENALTY_WEIGHT = 0.0
 
 # Keep only a few ranked plans at a time, then rebuild if feedback exhausts them.
 MAX_RANKED_SETS = 5
@@ -54,7 +54,7 @@ MAX_RANKED_SETS = 5
 GLOBAL_CANDIDATE_PREFILTER_BY_WORD_COUNT = {
     16: 800,
     12: 400,
-    8: 250,
+    8: 400,
     4: 1,
 }
 
