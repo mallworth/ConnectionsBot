@@ -38,7 +38,21 @@ The bot still submits only one 4-word guess at a time because that is how Connec
 
 ## The Idea
 
-The planner generates many possible 4-word candidate guesses from the remaining board words. It scores each candidate under different group slot profiles. Then it combines non-overlapping candidates into complete sets that use every remaining word exactly once.
+The planner generates many possible 4-word candidate guesses from the remaining board words. Before it runs the heavier heuristics, it now applies a global candidate prefilter: every valid 4-word group receives a cheap embedding-only score, and only the strongest shortlist moves forward into phrase, insertion, homophone, and full-set planning.
+
+The global shortlist size is controlled near the top of `SolutionSetPlanner.py`:
+
+```python
+GLOBAL_CANDIDATE_PREFILTER_BY_WORD_COUNT = {
+    16: 200,
+    12: 120,
+    8: 70,
+    4: 1,
+}
+GLOBAL_CANDIDATE_PREFILTER_DEFAULT = 200
+```
+
+This means a fresh 16-word board still considers all possible groups cheaply, but expensive work is limited to about the top 200 groups. Smaller boards use smaller limits because there are fewer possible groups left. After that shortlist is formed, the planner scores each candidate under different group slot profiles. Then it combines non-overlapping candidates into complete sets that use every remaining word exactly once.
 
 Each full set gets a `TOTAL` score. The bot submits the next group from the best ranked set.
 
@@ -153,7 +167,19 @@ This heuristic looks for common words that can go before or after board words, l
 
 The planner precomputes phrase contexts for the remaining board words. A group scores high if all 4 words share the same before/after context. It uses Zipf frequency from `wordfreq` to prefer common phrases and avoid unnatural phrases.
 
-For speed, the full-board planner uses visible caps like `PLANNER_PHRASE_CANDIDATE_LIMIT`, `CANDIDATE_PREFILTER_LIMIT`, and `WORDPLAY_PREFILTER_LIMIT` in `SolutionSetPlanner.py`. These are testing knobs, not hidden logic.
+For speed, the full-board planner uses visible caps like `GLOBAL_CANDIDATE_PREFILTER_BY_WORD_COUNT`, `PLANNER_PHRASE_CANDIDATE_LIMIT`, `CANDIDATE_PREFILTER_LIMIT`, and `WORDPLAY_PREFILTER_LIMIT` in `SolutionSetPlanner.py`. These are testing knobs, not hidden logic. The global prefilter is the first speed gate: it keeps phrase and wordplay scoring away from weak candidates instead of letting those heavier heuristics touch all 1,820 groups on a fresh board.
+
+## Performance Notes
+
+The set planner is heavier than the old one-guess-at-a-time bot, so a few support-level speed-ups matter:
+
+- embedding pair cache: each pair of board words is scored once and reused
+- cached variant embeddings: insertion and homophone variant words do not get re-encoded over and over
+- cached homophone lookup: repeated one-word homophone searches reuse the same result
+- lazy NLTK loading: corpus lookup only happens when the legacy helper actually needs it
+- planner prefilters: expensive insertion/homophone scoring only runs on a smaller candidate slice
+
+These are not extra solver ideas. They are just the practical stuff that keeps the bigger set-based idea fast enough to use.
 
 ### Insertion
 

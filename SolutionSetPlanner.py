@@ -23,10 +23,10 @@ STRATEGY_ORDER = ["embedding", "phrase", "insertion", "homophone"]
 # These are the main knobs for the new set-based model. Group 1/2 stay focused
 # on semantic and phrase evidence; Group 3/4 allow more wordplay-style scoring.
 GROUP_PROFILE_WEIGHTS = {
-    "Group 1": {"embedding": 1.5, "phrase": 1.0, "insertion": 0.0, "homophone": 0.0},
-    "Group 2": {"embedding": 1.5, "phrase": 1.0, "insertion": 0.0, "homophone": 0.0},
-    "Group 3": {"embedding": 1.0, "phrase": 0.85, "insertion": 0.40, "homophone": 0.25},
-    "Group 4": {"embedding": 1.0, "phrase": 0.7, "insertion": 0.4, "homophone": 0.4},
+    "Group 1": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
+    "Group 2": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
+    "Group 3": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
+    "Group 4": {"embedding": 1.0, "phrase": 0.0, "insertion": 0.0, "homophone": 0.0},
 }
 
 # Full-set scores slightly favor earlier confident groups, but still include a
