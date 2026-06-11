@@ -4,13 +4,26 @@ import numpy as np
 import random
 from itertools import combinations
 import nltk
-nltk.download("wordnet")
-nltk.download("words")
 from nltk.corpus import wordnet
 from nltk.corpus import words
 import pronouncing
 from itertools import product
 from wordfreq import top_n_list, zipf_frequency
+
+
+def ensure_nltk_resource(resource_path: str, package_name: str):
+    # Avoid network checks on every import; only download an NLTK corpus if the
+    # local environment does not already have it.
+    try:
+        nltk.data.find(resource_path)
+    except LookupError:
+        try:
+            nltk.data.find(f"{resource_path}.zip")
+        except LookupError:
+            nltk.download(package_name, quiet=True)
+
+
+ensure_nltk_resource("corpora/words", "words")
 
 
 PHRASE_CANDIDATE_COUNT = 8000
@@ -47,7 +60,9 @@ def cosine_sim(a, b):
 def n_most_similar(words: list[str], model, n=4) -> tuple[list[str], float]:
     word_embs = {}
     for w in words:
-        word_embs[w] = model.encode(w)
+        # Reuse model encodings across variant candidates instead of encoding
+        # the same insertion/homophone words again and again.
+        word_embs[w] = cached_model_embedding(w, model)
 
     combos = combinations(words, n)
     res = (None, float("-inf"))
@@ -63,7 +78,10 @@ def n_most_similar(words: list[str], model, n=4) -> tuple[list[str], float]:
     return res
 
 # Given a word, return an array of its homophones
+@lru_cache(maxsize=4096)
 def get_homophones(word) -> list[str]:
+    # Homophone lookup is expensive because pronouncing.search scans a large
+    # dictionary, so cache it for repeated candidate scoring in the planner.
     word = word.lower()
     phones = pronouncing.phones_for_word(word)
 
@@ -79,6 +97,18 @@ def get_homophones(word) -> list[str]:
             homophones.append(w)
 
     return homophones
+
+
+MODEL_EMBEDDING_CACHE = {}
+
+
+def cached_model_embedding(word: str, model):
+    # Variant words from insertion/homophone scoring repeat a lot; caching their
+    # embeddings keeps wordplay scoring from re-encoding the same strings.
+    key = word.lower()
+    if key not in MODEL_EMBEDDING_CACHE:
+        MODEL_EMBEDDING_CACHE[key] = model.encode(word)
+    return MODEL_EMBEDDING_CACHE[key]
 
 
 def random_untried_guess(words: list[str], incorrect: Guesses) -> Guess:
@@ -145,21 +175,48 @@ def phrase_collocation_score(candidate: str, word: str, candidate_before: bool) 
     return max(0.0, phrase_freq - generic_penalty), phrase
 
 
-def embedding_group_score(guess_words: list[str], word_embs) -> float:
+def build_embedding_similarity_cache(word_embs: dict[str, object]) -> dict[tuple[str, str], float]:
+    # The set planner scores many 4-word groups, so cache each pair once and
+    # reuse the six pair values needed by any one candidate group.
+    cache = {}
+    for word_a, word_b in combinations(sorted(word_embs.keys()), 2):
+        cache[(word_a, word_b)] = cosine_sim(word_embs[word_a], word_embs[word_b])
+    return cache
+
+
+def cached_pair_similarity(word_a: str, word_b: str, word_embs, sim_cache=None) -> float:
+    # Pair lookup keeps the embedding math in one place; if no cache is passed,
+    # older callers still get the original cosine behavior.
+    if word_a == word_b:
+        return 1.0
+
+    key = tuple(sorted((word_a, word_b)))
+    if sim_cache is not None and key in sim_cache:
+        return sim_cache[key]
+
+    if word_a not in word_embs or word_b not in word_embs:
+        return 0.0
+    return cosine_sim(word_embs[word_a], word_embs[word_b])
+
+
+def embedding_group_score(guess_words: list[str], word_embs, sim_cache=None) -> float:
     # Shared scorer for one fixed guess: higher means the four board words are
     # more semantically close under the embedding model.
     if not word_embs:
         return 0.0
 
-    embeddings = [word_embs[w] for w in guess_words if w in word_embs]
-    if len(embeddings) != 4:
+    normalized_words = [w.lower() for w in guess_words]
+    if len(normalized_words) != 4 or any(w not in word_embs for w in normalized_words):
         return 0.0
 
-    pair_idxs = list(combinations(range(4), 2))
-    return max(0.0, np.mean([cosine_sim(embeddings[i], embeddings[j]) for i, j in pair_idxs]))
+    pair_scores = [
+        cached_pair_similarity(word_a, word_b, word_embs, sim_cache)
+        for word_a, word_b in combinations(normalized_words, 2)
+    ]
+    return max(0.0, np.mean(pair_scores))
 
 
-def phrase_guess_score(guess: Guess, word_embs=None) -> float:
+def phrase_guess_score(guess: Guess, word_embs=None, sim_cache=None) -> float:
     # Score one fixed 4-word guess using the same shared before/after context
     # idea as phrase_context_guess.
     # This lets one-away repair reuse the phrase heuristic without searching
@@ -183,7 +240,7 @@ def phrase_guess_score(guess: Guess, word_embs=None) -> float:
 
         guess_words = [word for word, _ in scored_words]
         phrase_score = np.mean([score for _, score in scored_words]) / PHRASE_SCORE_NORMALIZER
-        semantic_score = embedding_group_score(guess_words, word_embs)
+        semantic_score = embedding_group_score(guess_words, word_embs, sim_cache)
         best_score = max(best_score, min(1.0, (phrase_score * 0.75) + (semantic_score * 0.25)))
 
     return best_score
@@ -231,16 +288,16 @@ def homophone_guess_score(guess: Guess, model) -> float:
     return max_variant_similarity_score(variant_groups, model)
 
 
-def score_guess_with_strategy(guess: Guess, strategy: str, word_embs, model) -> float:
+def score_guess_with_strategy(guess: Guess, strategy: str, word_embs, model, sim_cache=None) -> float:
     # A one-away guess is most useful when repaired with the same heuristic that
     # nearly succeeded in the first place.
     if strategy == "phrase":
-        return phrase_guess_score(guess, word_embs)
+        return phrase_guess_score(guess, word_embs, sim_cache)
     if strategy == "insertion":
         return char_insertion_guess_score(guess, model)
     if strategy == "homophone":
         return homophone_guess_score(guess, model)
-    return embedding_group_score(guess.words, word_embs)
+    return embedding_group_score(guess.words, word_embs, sim_cache)
 
 
 def repair_one_away_guess(words_remaining: list[str], incorrect: Guesses, one_away: Guesses, one_away_strategies: dict, one_away_weights: dict, word_embs, model, default_guess: Guess = None) -> WeightedGuess:
@@ -297,7 +354,7 @@ def repair_one_away_guess(words_remaining: list[str], incorrect: Guesses, one_aw
 # === Guessing functions ===
 # NOTE: functions used to inform ConnectionsBot.guess() should go here
 
-def embedding_similarity(words: list[str], incorrect: Guesses, word_embs) -> WeightedGuess:
+def embedding_similarity(words: list[str], incorrect: Guesses, word_embs, sim_cache=None) -> WeightedGuess:
     combos = [Guess(list(c)) for c in combinations(words, 4)]
     combos = [guess for guess in combos if guess not in incorrect.guesses]
 
@@ -306,9 +363,7 @@ def embedding_similarity(words: list[str], incorrect: Guesses, word_embs) -> Wei
     # print(words)
 
     for c in combos:
-        embeddings = [word_embs[w] for w in c.words]
-        pair_idxs = list(combinations(range(4), 2))
-        score = np.mean([cosine_sim(embeddings[i], embeddings[j]) for i, j in pair_idxs])
+        score = embedding_group_score(c.words, word_embs, sim_cache)
 
         if score > bestguess.weight:
             bestguess = WeightedGuess(c, score)
@@ -366,6 +421,9 @@ def phrase_context_guess(word_list: list[str], incorrect: Guesses, word_embs=Non
 
 # Go through each sense of each word in wordnet, if other words in that sense return that guess
 def wordnet_guess(words: list[str], incorrect: Guesses) -> WeightedGuess:
+    # WordNet is only needed for this legacy helper, so load/download it lazily
+    # instead of slowing down normal planner imports.
+    ensure_nltk_resource("corpora/wordnet", "wordnet")
     wordset = set([x.lower() for x in words])
 
     for w in words:
