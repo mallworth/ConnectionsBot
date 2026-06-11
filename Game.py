@@ -14,7 +14,10 @@ class Game:
 
     def process_guess(self, guess: Guess):
         for c in self.__categories:
-            if set([w.lower() for w in guess.words]) == set([w.lower() for w in c["words"]]):
+            guess_words = set([w.lower() for w in guess.words])
+            category_words = set([w.lower() for w in c["words"]])
+
+            if guess_words == category_words:
                 # Correctly guessed!
                 self.correct += 1
                 return {
