@@ -234,7 +234,7 @@ def subgroup_synonym(word_list: list[str], incorrect: Guesses, model) -> Weighte
     MAX_SUBWORD_LEN = 6
     MAX_CANDS_PER_WORD = 10
     INCLUDE_FULL_WORD = True
-    DEBUG = True
+    DEBUG = False
 
     def fallback() -> WeightedGuess:
         guess = Guess(random.sample(word_list, 4))
@@ -483,6 +483,180 @@ def wordnet_hypernym_guess(word_list: list[str], incorrect: Guesses) -> Weighted
 
             if score > best.weight:
                 best = WeightedGuess(guess, score)
+
+    if best.guess is None:
+        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+
+    return best
+
+
+
+def last_four_guess(word_list: list[str], incorrect: Guesses) -> WeightedGuess:
+    if len(word_list) == 4:
+        guess = Guess(word_list)
+
+        if guess not in incorrect.guesses:
+            return WeightedGuess(guess, 999.0)
+
+    return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+
+
+# this is cheese but whatever 
+
+CURATED = {
+    "body_parts": {
+        "head", "shoulder", "knee", "toe", "ankle", "foot", "arm", "leg",
+        "hand", "eye", "ear", "nose", "mouth", "back"
+    },
+    "colors": {
+        "red", "blue", "green", "yellow", "orange", "purple", "pink",
+        "black", "white", "brown", "gray", "violet", "indigo"
+    },
+    "animals": {
+        "bear", "seal", "crane", "mole", "bass", "sole", "trout", "flounder",
+        "cat", "dog", "horse", "cow", "pig", "goat", "ram", "eagle", "hawk"
+    },
+    "card_suits": {
+        "heart", "diamond", "club", "spade"
+    },
+    "planets": {
+        "mercury", "venus", "earth", "mars", "jupiter", "saturn", "uranus", "neptune"
+    },
+    "zodiac": {
+        "aries", "taurus", "gemini", "cancer", "leo", "virgo",
+        "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces"
+    },
+    "greek_letters": {
+        "alpha", "beta", "gamma", "delta", "epsilon", "theta", "lambda",
+        "mu", "pi", "sigma", "omega"
+    },
+    "kinds_of_socks": {
+        "crew", "ankle", "dress", "compression", "tube", "quarter", "no-show"
+    },
+}
+
+
+def curated_list_guess(word_list: list[str], incorrect: Guesses) -> WeightedGuess:
+    best = WeightedGuess(None, float("-inf"))
+
+    for category, items in CURATED.items():
+        matched = [w for w in word_list if w.lower() in items]
+
+        if len(matched) < 4:
+            continue
+
+        for group in combinations(matched, 4):
+            guess = Guess(list(group))
+
+            if guess in incorrect.guesses:
+                continue
+
+            score = 2.0
+
+            if len(matched) == 4:
+                score += 0.75
+
+            if score > best.weight:
+                best = WeightedGuess(guess, score)
+
+    if best.guess is None:
+        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+
+    return best
+
+
+
+
+
+
+# when we get a 1 away message, focus on those.
+def one_away_repair(
+    word_list: list[str],
+    incorrect: Guesses,
+    one_away: Guesses,
+    model
+) -> WeightedGuess:
+    if not one_away.guesses:
+        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+
+    best = WeightedGuess(None, float("-inf"))
+
+    for group in combinations(word_list, 4):
+        guess = Guess(list(group))
+
+        if guess in incorrect.guesses:
+            continue
+
+        group_set = set(group)
+
+        explained = 0
+        for old_guess in one_away.guesses:
+            if len(group_set & set(old_guess.words)) == 3:
+                explained += 1
+
+        if explained == 0:
+            continue
+
+        emb_score = embedding_similarity(
+            list(group),
+            incorrect,
+            model
+        ).weight
+
+        score = emb_score + 0.75 * explained
+
+        # Put it here.
+        for old_guess in incorrect.guesses:
+            overlap = len(group_set & set(old_guess.words))
+
+            if overlap == 4:
+                score -= 999
+            elif overlap == 3 and old_guess not in one_away.guesses:
+                score -= 0.25
+
+        if score > best.weight:
+            best = WeightedGuess(guess, score)
+
+    if best.guess is None:
+        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+
+    return best
+
+
+def two_group_partition_guess(word_list: list[str], incorrect: Guesses, model) -> WeightedGuess:
+    if len(word_list) != 8:
+        return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)
+
+    best = WeightedGuess(None, float("-inf"))
+    seen = set()
+
+    for group1 in combinations(word_list, 4):
+        group1 = tuple(group1)
+        group2 = tuple(w for w in word_list if w not in group1)
+
+        key = tuple(sorted([tuple(sorted(group1)), tuple(sorted(group2))]))
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        guess1 = Guess(list(group1))
+        guess2 = Guess(list(group2))
+
+        if guess1 in incorrect.guesses or guess2 in incorrect.guesses:
+            continue
+
+        score1 = embedding_similarity(list(group1), incorrect, model).weight
+        score2 = embedding_similarity(list(group2), incorrect, model).weight
+
+        partition_score = score1 + score2 + 0.2
+
+        if partition_score > best.weight:
+            if score1 >= score2:
+                best = WeightedGuess(guess1, partition_score)
+            else:
+                best = WeightedGuess(guess2, partition_score)
 
     if best.guess is None:
         return WeightedGuess(Guess(random.sample(word_list, 4)), 0.0)

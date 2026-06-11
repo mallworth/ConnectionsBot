@@ -18,54 +18,6 @@ class ConnectionsBot:
     
 
 
-
-    def one_away_repair(self) -> WeightedGuess:
-        words_remaining = self.game_state.words_remaining
-        incorrect = self.game_state.incorrect_guess_groups
-
-        # Your GameState stores one-away guesses here.
-        one_away_guesses = self.game_state.one_away_guess_groups.guesses
-
-        print("one-away stored:", [g.words for g in one_away_guesses])
-
-        if not one_away_guesses:
-            return WeightedGuess(Guess(random.sample(words_remaining, 4)), 0.0)
-
-        best = WeightedGuess(None, float("-inf"))
-
-        for group in combinations(words_remaining, 4):
-            guess = Guess(list(group))
-
-            if guess in incorrect.guesses:
-                continue
-
-            group_set = set(group)
-
-            explained = 0
-
-            for old_guess in one_away_guesses:
-                if len(group_set & set(old_guess.words)) == 3:
-                    explained += 1
-
-            if explained == 0:
-                continue
-
-            emb_score = embedding_similarity(
-                list(group),
-                incorrect,
-                self.model
-            ).weight
-
-            score = emb_score + 0.75 * explained
-
-            if score > best.weight:
-                best = WeightedGuess(guess, score)
-
-        if best.guess is None:
-            return WeightedGuess(Guess(random.sample(words_remaining, 4)), 0.0)
-
-        return best
-
     # Generate a 4 word guess based on game state
     def guess(self) -> Guess:
         '''
@@ -77,7 +29,15 @@ class ConnectionsBot:
         NOTE: Please do most of your work in other files and import them to this
         file when adding them to this function to keep everything clean.
         '''
-        one_away_guess = self.one_away_repair()
+        partition_guess: WeightedGuess = two_group_partition_guess(
+            self.game_state.words_remaining,
+            self.game_state.incorrect_guess_groups,
+            self.model
+    )
+    
+        last_four =  last_four_guess(self.game_state.words_remaining,self.game_state.incorrect_guess_groups)
+        one_away_guess = one_away_repair(self.game_state.words_remaining,self.game_state.incorrect_guess_groups,self.game_state.one_away_guess_groups,model)
+        curated = curated_list_guess(self.game_state.words_remaining, self.game_state.incorrect_guess_groups)
         best_avg_emb: WeightedGuess = embedding_similarity(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.model)
         insert_guess: WeightedGuess = char_insertion(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.model)
         homophone_guess: WeightedGuess = similar_homophones(self.game_state.words_remaining, self.game_state.incorrect_guess_groups, self.model)
@@ -91,7 +51,8 @@ class ConnectionsBot:
 
 
         best_avg_emb.weight *= 1.2
-
+        print(f"Partition weight: {partition_guess.weight}, guess: {partition_guess.guess.words}")
+        print(f"four left weight: {last_four.weight}, guess: {last_four.guess.words}")
         print(f"One-away weight: {one_away_guess.weight}, guess: {one_away_guess.guess.words}")
         print(f"Embedding weight: {best_avg_emb.weight}, Guess: {best_avg_emb.guess.words}")
         print(f"Insert weight: {insert_guess.weight}, guess: {insert_guess.guess.words}")
@@ -103,7 +64,7 @@ class ConnectionsBot:
 
         print()
 # add/ remove metrics from here as needed to test individual ones
-        return max([best_avg_emb, insert_guess, homophone_guess, synonym_guess, one_away_guess], key=lambda x: x.weight).guess
+        return max([best_avg_emb, insert_guess, homophone_guess, synonym_guess, one_away_guess, last_four, curated, partition_guess], key=lambda x: x.weight).guess
     
     # Update game state based on feedback from game in response to a guess
     # returns status of game after guess
