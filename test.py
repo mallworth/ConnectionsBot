@@ -4,6 +4,9 @@ from Guesses import Guess
 import time
 import json
 
+guesses_made = 0
+correct_guesses = 0
+
 # Gets game with given ID from JSON into python dictionary
 def setup_game(id):
     with open("data/Connections_Data_train.json") as f:
@@ -19,7 +22,7 @@ def test():
     played = 0
     game_id = 1
 
-    while played < 250:
+    while played < 100:
         game_dict = setup_game(game_id)
         if not game_dict:
             game_id += 1
@@ -32,8 +35,9 @@ def test():
         won += 1 if gameres else 0
         played += 1
 
-    print(f"Win rate: {won / played * 100}")
+    print(f"Win rate: {won / 100}")
     print(f"Games played: {played}")
+    print(f"Correct guess rate: {correct_guesses / guesses_made}")
     print(f"Games won: {won}")
 
 def run(game: Game):
@@ -45,6 +49,10 @@ def run(game: Game):
         guess: Guess = agent.guess()
         guess_feedback: str = game.process_guess(guess)
         status: str = agent.process_guess_feedback(guess, guess_feedback)
+
+        guesses_made += 1
+        if guess_feedback["type"] == "correct":
+            correct_guesses += 1
 
         if status == "win":
             end = time.time()
