@@ -30,23 +30,23 @@ The game data comes from the files in `data/`.
 ## High-Level Strategy
 
 The bot does not use one single rule.
-It builds a few different guess candidates, scores them, and picks the best one.
+Each turn it builds a few guess candidates, scores them, and picks the best one.
 
-It usually starts with word meaning similarity.
-If that is weak, it tries phrase patterns, letter-insertion matches, and homophones.
+It does not run the heuristics as a hard fallback chain.
+It scores embedding, phrase, insertion, and homophone guesses in the same turn, then picks the best one after weights are applied.
 
 The bot also changes its choice based on game state:
 
 - solved colors change the weight of each strategy
 - wrong guesses can rotate which strategy gets tried first
-- `one away` guesses are stored and later repaired by changing one word
+- `one away` guesses are stored and later repaired by changing one word when the repair is strong enough
 
 So the bot works like this:
 
 1. Make one candidate guess from each heuristic
 2. Reweight them using current game state
 3. Pick the best one
-4. If a near-miss was saved, try a repair first
+4. If a near-miss was saved, try a repair first and keep it only if it is close enough to the normal best guess
 
 ## Heuristics Used
 
@@ -74,6 +74,11 @@ Then it checks whether the homophone forms make a tight 4-word group.
 
 If the bot was told a guess was `one away`, it saves that guess.
 Later it tries one-word swaps around that near-miss and scores the repaired guess with the same strategy that made the miss.
+
+### Other helper code
+
+`think.py` also has extra helper ideas like `wordnet_guess` and `subgroup_synonym`.
+They are not part of the main `ConnectionsBot.guess()` path right now.
 
 ## Notes
 
