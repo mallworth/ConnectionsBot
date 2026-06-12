@@ -27,6 +27,8 @@ from wordfreq import top_n_list, zipf_frequency
 
 
 PHRASE_CANDIDATE_COUNT = 8000
+# This is only used for phrase. 0 means phrase has no prefilter limit.
+GLOBAL_CANDIDATE_PREFILTER = 0
 MIN_CONTEXT_WORD_ZIPF = 3.2
 MAX_CONTEXT_WORD_ZIPF = 5.6
 MIN_PHRASE_ZIPF = 3.6
@@ -34,6 +36,9 @@ PHRASE_SCORE_NORMALIZER = 6.0
 PHRASE_BREADTH_PENALTY = 0.02
 REPAIR_BONUS = 1.08
 REPAIR_DEFAULT_OVERLAP_BONUS = 0.1
+INSERTION_ADMIT_THRESHOLD = 0.55
+HOMOPHONE_ADMIT_THRESHOLD = 0.58
+SPECIAL_HEURISTIC_LIMIT = 3
 
 PHRASE_STOPWORDS = {
     # These are too generic to be useful as phrase anchors, so we skip them
@@ -76,6 +81,7 @@ def n_most_similar(words: list[str], model, n=4) -> tuple[list[str], float]:
     return res
 
 # Given a word, return an array of its homophones
+@lru_cache(maxsize=4096)
 def get_homophones(word) -> list[str]:
     word = word.lower()
     phones = pronouncing.phones_for_word(word)
@@ -267,6 +273,188 @@ def score_guess_with_strategy(guess: Guess, strategy: str, word_embs, model) -> 
     if strategy == "homophone":
         return homophone_guess_score(guess, model)
     return embedding_group_score(guess.words, word_embs)
+
+
+def guess_key(guess: Guess) -> tuple[str, ...]:
+    # This makes guesses easy to combine even if the word order changes.
+    return tuple(sorted(w.lower() for w in guess.words))
+
+
+def empty_heuristic_scores() -> dict[str, float]:
+    # Every candidate uses the same four score names.
+    return {
+        "embedding": 0.0,
+        "phrase": 0.0,
+        "insertion": 0.0,
+        "homophone": 0.0,
+    }
+
+
+def embedding_candidate_shortlist(words: list[str], incorrect: Guesses, word_embs, enabled: bool = True) -> list[GroupCandidate]:
+    # If the weight switch turns this off, do not spend time scoring it.
+    if not enabled:
+        return []
+
+    candidates = []
+
+    for group in combinations(words, 4):
+        guess = Guess(list(group))
+
+        if guess in incorrect.guesses:
+            continue
+
+        scores = empty_heuristic_scores()
+        scores["embedding"] = embedding_group_score(guess.words, word_embs)
+        candidates.append(GroupCandidate(guess, scores, main_source="embedding"))
+
+    candidates.sort(key=lambda c: c.heuristic_scores["embedding"], reverse=True)
+    return candidates
+
+
+def phrase_context_shortlist(word_list: list[str], incorrect: Guesses, word_embs=None, allowed_guesses=None) -> list[GroupCandidate]:
+    # Phrase is expensive, so this can be limited to embedding's shortlist.
+    if allowed_guesses is not None:
+        allowed_keys = {guess_key(candidate.guess) for candidate in allowed_guesses}
+    else:
+        allowed_keys = None
+
+    context_scores = {}
+    board_words = [w.lower() for w in word_list]
+    candidates = phrase_candidate_words()
+
+    for board_word in board_words:
+        for candidate in candidates:
+            before_score, before_phrase = phrase_collocation_score(candidate, board_word, True)
+            if before_score > 0:
+                context_scores.setdefault(("before", candidate), []).append((board_word, before_score, before_phrase))
+
+            after_score, after_phrase = phrase_collocation_score(candidate, board_word, False)
+            if after_score > 0:
+                context_scores.setdefault(("after", candidate), []).append((board_word, after_score, after_phrase))
+
+    best_by_guess = {}
+
+    for context, scored_words in context_scores.items():
+        if len(scored_words) < 4:
+            continue
+
+        scored_words.sort(key=lambda x: x[1], reverse=True)
+
+        for combo in combinations(scored_words[:8], 4):
+            guess_words = [word for word, _, _ in combo]
+            guess = Guess(guess_words)
+            key = guess_key(guess)
+
+            if allowed_keys is not None and key not in allowed_keys:
+                continue
+            if guess in incorrect.guesses:
+                continue
+
+            phrase_score = np.mean([score for _, score, _ in combo]) / PHRASE_SCORE_NORMALIZER
+            semantic_score = embedding_group_score(guess_words, word_embs)
+            breadth_penalty = max(0, len(scored_words) - 4) * PHRASE_BREADTH_PENALTY
+            normalized_score = min(1.0, (phrase_score * 0.75) + (semantic_score * 0.25) - breadth_penalty)
+
+            if key not in best_by_guess or normalized_score > best_by_guess[key].heuristic_scores["phrase"]:
+                scores = empty_heuristic_scores()
+                scores["phrase"] = normalized_score
+                best_by_guess[key] = GroupCandidate(guess, scores, main_source="phrase")
+
+    results = list(best_by_guess.values())
+    results.sort(key=lambda c: c.heuristic_scores["phrase"], reverse=True)
+    return results
+
+
+def special_heuristic_shortlist(words: list[str], incorrect: Guesses, model, strategy: str, threshold: float, limit: int) -> list[GroupCandidate]:
+    # Homophone and insertion only get admitted when the score is strong.
+    candidates = []
+
+    for group in combinations(words, 4):
+        guess = Guess(list(group))
+
+        if guess in incorrect.guesses:
+            continue
+
+        if strategy == "insertion":
+            score = char_insertion_guess_score(guess, model)
+        else:
+            score = homophone_guess_score(guess, model)
+
+        if score < threshold:
+            continue
+
+        scores = empty_heuristic_scores()
+        scores[strategy] = score
+        candidates.append(GroupCandidate(guess, scores, main_source=strategy))
+
+    candidates.sort(key=lambda c: c.heuristic_scores[strategy], reverse=True)
+    return candidates[:limit]
+
+
+def merge_candidate_scores(score_map: dict[tuple[str, ...], GroupCandidate], candidates: list[GroupCandidate], strategy: str):
+    # Put all heuristic scores for the same guess into one object.
+    for candidate in candidates:
+        key = guess_key(candidate.guess)
+
+        if key not in score_map:
+            score_map[key] = GroupCandidate(candidate.guess, empty_heuristic_scores())
+
+        score = candidate.heuristic_scores.get(strategy, 0.0)
+        if score > score_map[key].heuristic_scores[strategy]:
+            score_map[key].heuristic_scores[strategy] = score
+
+
+def build_hybrid_candidate_scores(words: list[str], incorrect: Guesses, word_embs, model, enabled_heuristics: dict[str, bool]) -> tuple[list[GroupCandidate], dict[str, list[GroupCandidate]]]:
+    # Build the ranked lists for the new hybrid set logic.
+    shortlists = {
+        "embedding": [],
+        "phrase": [],
+        "insertion": [],
+        "homophone": [],
+    }
+    score_map = {}
+
+    needs_embedding_prefilter = enabled_heuristics.get("phrase", False) and GLOBAL_CANDIDATE_PREFILTER > 0
+    shortlists["embedding"] = embedding_candidate_shortlist(
+        words,
+        incorrect,
+        word_embs,
+        enabled_heuristics.get("embedding", False) or needs_embedding_prefilter,
+    )
+
+    if enabled_heuristics.get("embedding", False):
+        merge_candidate_scores(score_map, shortlists["embedding"], "embedding")
+
+    if enabled_heuristics.get("phrase", False):
+        phrase_allowed = None
+        if GLOBAL_CANDIDATE_PREFILTER > 0:
+            phrase_allowed = shortlists["embedding"][:GLOBAL_CANDIDATE_PREFILTER]
+        shortlists["phrase"] = phrase_context_shortlist(words, incorrect, word_embs, phrase_allowed)
+        merge_candidate_scores(score_map, shortlists["phrase"], "phrase")
+
+    if enabled_heuristics.get("insertion", False):
+        shortlists["insertion"] = special_heuristic_shortlist(
+            words,
+            incorrect,
+            model,
+            "insertion",
+            INSERTION_ADMIT_THRESHOLD,
+            SPECIAL_HEURISTIC_LIMIT,
+        )
+        merge_candidate_scores(score_map, shortlists["insertion"], "insertion")
+
+    if enabled_heuristics.get("homophone", False):
+        shortlists["homophone"] = special_heuristic_shortlist(
+            words,
+            incorrect,
+            model,
+            "homophone",
+            HOMOPHONE_ADMIT_THRESHOLD,
+            SPECIAL_HEURISTIC_LIMIT,
+        )
+        merge_candidate_scores(score_map, shortlists["homophone"], "homophone")
+
+    return list(score_map.values()), shortlists
 
 
 def repair_one_away_guess(words_remaining: list[str], incorrect: Guesses, one_away: Guesses, one_away_strategies: dict, one_away_weights: dict, word_embs, model, default_guess: Guess = None) -> WeightedGuess:

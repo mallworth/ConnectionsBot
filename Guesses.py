@@ -34,3 +34,20 @@ class Guesses:
 class WeightedGuess:
     guess: Guess
     weight: float
+
+@dataclass
+class GroupCandidate:
+    # Stores one possible 4 word group and all its simple scores.
+    guess: Guess
+    heuristic_scores: dict[str, float]
+    slot_name: str = ""
+    slot_score: float = 0.0
+    normalizer: float = 1.0
+    main_source: str = "embedding"
+    bonus: float = 0.0
+
+@dataclass
+class SolutionSet:
+    # Stores one possible full board answer set.
+    groups: list[GroupCandidate]
+    total_score: float
