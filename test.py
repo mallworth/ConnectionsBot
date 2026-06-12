@@ -41,6 +41,7 @@ def test():
     print(f"Games won: {won}")
 
 def run(game: Game):
+    global guesses_made, correct_guesses
     start = time.time()
     words = [x for row in game.grid for x in row]
     agent = ConnectionsBot(words)
