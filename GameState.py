@@ -31,6 +31,7 @@ class GameState:
         if theme in self.correct_guess_groups:
             raise ValueError(f"Theme: {theme} already guessed")
         else:
+            print(f"Got correct group!: {guess}, {theme}")
             self.correct_guess_groups[guess] = (theme, color)
             self.guesses.add_guess(guess)
             self.words_remaining = list(set(self.words_remaining) - set(guess.words)) # update words remaining
@@ -45,7 +46,7 @@ class GameState:
             self.one_away_guess_strategies[guess] = strategy
             self.one_away_guess_weights[guess] = weight
         self.guesses.add_guess(guess)
-        self.incorrect_guess_groups.add_guess(guess)
+        self.incorrect_guess_groups.add_guess(guess, one_away)
 
         self.mistakes += 1  # increment mistake counter since this guess wasn't correct
 
