@@ -2,3 +2,4 @@
 __pycache__/
 venv/
 scrape.py
+IMPLEMENTATION_PLAN.md
