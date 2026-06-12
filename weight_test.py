@@ -1,7 +1,6 @@
-from ConnectionsBot import ConnectionsBot, DEFAULT_WEIGHT_MATRIX
+from ConnectionsBot import ConnectionsBot, DEFAULT_WEIGHT_MATRIX, GROUP_ORDER, STRATEGY_ORDER
 from Game import Game
 from Guesses import Guess
-from GameState import Color
 import json
 import random
 
@@ -52,11 +51,12 @@ def test(weight_matrix=None):
 
 
 def random_weight_matrix():
-    # The bot now has four strategies, so each profile needs four tunable
-    # multipliers instead of the old three.
-    keys = ["empty", Color.YELLOW, Color.GREEN, Color.BLUE, Color.PURPLE]
+    # Each group slot gets one editable weight for every heuristic.
     values = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
-    return {key: [random.choice(values) for _ in range(4)] for key in keys}
+    return {
+        key: {strategy: random.choice(values) for strategy in STRATEGY_ORDER}
+        for key in GROUP_ORDER
+    }
 
 
 if __name__ == "__main__":
@@ -78,6 +78,5 @@ if __name__ == "__main__":
     print(f"Best accuracy: {best[1]:.2%}")
     print(f"Best weight matrix:")
 
-    keys = ["empty", Color.YELLOW, Color.GREEN, Color.BLUE, Color.PURPLE]
-    for key in keys:
+    for key in GROUP_ORDER:
         print(f"{key}: {best[0][key]}")
